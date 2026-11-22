@@ -1,0 +1,33 @@
+{
+  "name": "session-tickets-bot",
+  "version": "3.0.0",
+  "description": "",
+  "license": "ISC",
+  "author": "Ladno",
+  "type": "module",
+  "main": "dist/main.js",
+  "scripts": {
+    "dev": "tsx --env-file=.env src/bot.ts",
+    "build": "tsc --build",
+    "start": "node --env-file=.env dist/bot.js",
+    "db:seed": "tsx --env-file=.env -e \"import('./src/database/seed.js').then(m => m.seedFakeData(25).then(() => process.exit(0)))\"",
+    "db:inspect": "tsx --env-file=.env -e \"import('./src/database/inspect.js').then(m => m.inspectDatabase().then(() => process.exit(0)))\""
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.11.1",
+    "dotenv": "^17.4.2",
+    "googleapis": "^173.0.0",
+    "grammy": "^1.44.0",
+    "kysely": "^0.29.3"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^26.1.1",
+    "tsx": "^4.23.0",
+    "typescript": "^7.0.2"
+  },
+  "allowScripts": {
+    "better-sqlite3@12.11.1": true,
+    "esbuild@0.28.2": true
+  }
+}

@@ -1,0 +1,13 @@
+dist/
+node_modules/
+data/
+
+.env
+credentials.json
+package-lock.json
+test_storage.db
+storage.db
+tsconfig.tsbuildinfo
+
+repomix-output.md
+repomix-output.xml
