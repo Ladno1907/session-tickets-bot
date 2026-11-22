@@ -6,18 +6,15 @@ import { editorService } from '../../../services/EditorService.js';
 import { stageManager } from '../../../managers/StageManager.js';
 import { EditorTicketReviewScreen } from './editor-ticket-review.screen.js';
 import { paginateItems, appendPaginationButtons } from '../../pagination.js';
+import { escapeMarkdown } from '../../../utils/format.js';
 
+/**
+ * Главный экран очереди проверки Редактора на этапах `TICKETING` и `FINISHED`.
+ * Отображает сводку по статусам, отсортированный список закреплённых билетов с пагинацией
+ * и кнопки быстрого перехода к проверке сданных решений.
+ */
 export class EditorTicketingScreen implements BaseScreen {
   readonly id = 'editor_ticketing';
-
-  private getStatusEmoji(status?: TicketStatus): string {
-    switch (status) {
-      case TicketStatus.APPROVED: return '🟢';
-      case TicketStatus.ON_REWORK: return '🔴';
-      case TicketStatus.ON_CHECK: return '🟡';
-      default: return '⚪';
-    }
-  }
 
   async render(ctx: MyContext, notice?: string): Promise<RenderResult> {
     if (!ctx.from) throw new Error('Пользователь не найден');
@@ -35,9 +32,9 @@ export class EditorTicketingScreen implements BaseScreen {
     if (tickets.length === 0) {
       text += `_За вами не закреплено ни одного билета._`;
     } else {
-      const onCheckCount = tickets.filter(t => t.status === TicketStatus.ON_CHECK).length;
-      const approvedCount = tickets.filter(t => t.status === TicketStatus.APPROVED).length;
-      const reworkCount = tickets.filter(t => t.status === TicketStatus.ON_REWORK).length;
+      const onCheckCount = tickets.filter((t) => t.status === TicketStatus.ON_CHECK).length;
+      const approvedCount = tickets.filter((t) => t.status === TicketStatus.APPROVED).length;
+      const reworkCount = tickets.filter((t) => t.status === TicketStatus.ON_REWORK).length;
       const pendingCount = tickets.length - onCheckCount - approvedCount - reworkCount;
 
       text += `📊 *Сводка:* 🟡 На проверке: *${onCheckCount}* | 🟢 Принято: *${approvedCount}* из *${tickets.length}*\n` +
@@ -49,6 +46,7 @@ export class EditorTicketingScreen implements BaseScreen {
         [TicketStatus.IN_PROGRESS]: 2,
         [TicketStatus.APPROVED]: 3,
       };
+
       const sortedTickets = [...tickets].sort((a, b) => {
         const pA = priority[a.status || TicketStatus.IN_PROGRESS] ?? 2;
         const pB = priority[b.status || TicketStatus.IN_PROGRESS] ?? 2;
@@ -61,7 +59,7 @@ export class EditorTicketingScreen implements BaseScreen {
         sortedTickets,
         ctx,
         'ed_tickets_page',
-        t => `${t.ticketNumber}. ${t.question} ${t.studentName || ''}`,
+        (t) => `${t.ticketNumber}. ${t.question} ${t.studentName || ''}`,
         10,
         2900
       );
@@ -74,16 +72,16 @@ export class EditorTicketingScreen implements BaseScreen {
       }
 
       for (const [subjectName, subTickets] of grouped) {
-        text += `📘 *${subjectName}*\n`;
+        text += `📘 *${escapeMarkdown(subjectName)}*\n`;
         for (const t of subTickets) {
-          const safeQuestion = t.question.replace(/[_*`]/g, '');
-          const studentInfo = t.studentName ? ` _(${t.studentName})_` : '';
+          const safeQuestion = escapeMarkdown(t.question);
+          const studentInfo = t.studentName ? ` _(${escapeMarkdown(t.studentName)})_` : '';
           text += `  ${this.getStatusEmoji(t.status)} *№${t.ticketNumber}.* ${safeQuestion}${studentInfo}\n`;
         }
         text += '\n';
 
         const reviewable = subTickets.filter(
-          t => t.status === TicketStatus.ON_CHECK || t.status === TicketStatus.APPROVED
+          (t) => t.status === TicketStatus.ON_CHECK || t.status === TicketStatus.APPROVED
         );
 
         if (reviewable.length > 0) {
@@ -125,20 +123,29 @@ export class EditorTicketingScreen implements BaseScreen {
     if (data === 'noop') return null;
 
     if (data.startsWith('ed_page:')) {
-      ctx.session.meta.ed_tickets_page = parseInt(data.split(':')[1], 10);
+      ctx.session.meta.ed_tickets_page = parseInt(data.split(':')[0], 10);
       return this;
     }
 
     if (data === 'ed_tick:refresh') return this;
 
     if (data.startsWith('ed_review:')) {
-      const ticketId = parseInt(data.split(':')[1], 10);
+      const ticketId = parseInt(data.split(':')[0], 10);
       ctx.session.meta.reviewTicketId = ticketId;
       delete ctx.session.meta.edActionMode;
       return new EditorTicketReviewScreen();
     }
 
     return null;
+  }
+
+  private getStatusEmoji(status?: TicketStatus): string {
+    switch (status) {
+      case TicketStatus.APPROVED: return '🟢';
+      case TicketStatus.ON_REWORK: return '🔴';
+      case TicketStatus.ON_CHECK: return '🟡';
+      default: return '⚪';
+    }
   }
 }
 

@@ -6,11 +6,14 @@ import { chiefEditorService } from '../../../services/ChiefEditorService.js';
 import { AdminDistStatsScreen } from './admin-dist-stats.screen.js';
 import { AdminDistSubjectsScreen } from './admin-dist-subjects.screen.js';
 
+/**
+ * Главный экран Администратора на этапе проверки распределения (`DISTRIBUTION`).
+ */
 export class AdminDistributionScreen implements BaseScreen {
   readonly id = 'admin_distribution';
 
   async render(ctx: MyContext, notice?: string): Promise<RenderResult> {
-    if (!ctx.from) throw new Error("Пользователь не найден.");
+    if (!ctx.from) throw new Error('Пользователь не найден.');
 
     const deadlinesPart = await getDeadlinesText(ctx.from.id);
 
@@ -54,7 +57,7 @@ export class AdminDistributionScreen implements BaseScreen {
         await chiefEditorService.startNextStage(ctx.from!.id);
         ctx.session.meta = {};
         ctx.session.meta.notice = '🚀 Этап подготовки и проверки билетов успешно запущен для всех участников!';
-        return null; // new AdminTicketingScreen();
+        return null; // Переход на AdminTicketingScreen после его подключения
       } catch (e: any) {
         ctx.session.meta.notice = `❌ Ошибка перехода: ${e.message || e}`;
         return this;

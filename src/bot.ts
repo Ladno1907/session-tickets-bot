@@ -5,19 +5,25 @@ import { ProcessStage } from './types/entities.js';
 import { migrate } from './database/migrate.js';
 import { sqliteSessionAdapter } from './database/adapters/SQLiteSessionAdapter.js';
 import { stageManager } from './managers/StageManager.js';
-import { chiefEditorService } from './services/ChiefEditorService.js';
-
-import { screenFactory } from './screens/screenFactory.js';
 import { messageManager } from './managers/MessageManager.js';
+import { chiefEditorService } from './services/ChiefEditorService.js';
 import { studentService } from './services/StudentService.js';
+import { screenFactory } from './screens/screenFactory.js';
 
 export const bot = new Bot<MyContext>(config.botToken);
 
-async function runBot() {
+/**
+ * Точка входа приложения: выполняет миграции БД, настраивает middleware,
+ * регистрирует роутинг команд и экранов и запускает long polling.
+ */
+async function runBot(): Promise<void> {
   try {
     await migrate();
     await chiefEditorService.syncChiefEditors(config.chiefEditorIds);
 
+    // =======================================================================
+    // MIDDLEWARE: АВТО-MARKDOWN И СЕССИИ В SQLITE
+    // =======================================================================
     bot.api.config.use((prev, method, payload, signal) => {
       if (method === 'sendMessage' || method === 'editMessageText') {
         if (payload && typeof payload === 'object' && !('parse_mode' in payload)) {
@@ -31,19 +37,20 @@ async function runBot() {
       session({
         storage: sqliteSessionAdapter,
         getSessionKey: (ctx) => ctx.from?.id.toString(),
-        initial: (): BotSessionData => ({ 
+        initial: (): BotSessionData => ({
           currentScreenId: 'main_menu',
-          meta: {} as Record<string, any>
+          meta: {} as Record<string, any>,
         }),
       })
     );
 
+    // Актуализация текущей стадии при старте и запуск фонового таймера
     await stageManager.checkAndTransition(bot);
     stageManager.startPeriodicCheck(bot);
 
-    // =========================================================================
+    // =======================================================================
     // КОМАНДА: /admin (Панель Администратора)
-    // =========================================================================
+    // =======================================================================
     bot.command('admin', async (ctx) => {
       try {
         const isAdmin = config.chiefEditorIds.includes(ctx.from?.id || 0);
@@ -60,7 +67,6 @@ async function runBot() {
         };
 
         const targetScreenId = stageToScreenMap[currentStage];
-
         if (!targetScreenId) {
           console.error(`Команда /admin: Не удалось определить экран для стадии ${currentStage}`);
           await ctx.reply('❌ Ошибка: Текущая стадия процесса не поддерживается админ-панелью.');
@@ -84,9 +90,9 @@ async function runBot() {
       }
     });
 
-    // =========================================================================
-    // КОМАНДА: /start и /user (Личный кабинет Студента)
-    // =========================================================================
+    // =======================================================================
+    // КОМАНДЫ: /start и /user (Личный кабинет Студента)
+    // =======================================================================
     bot.command(['start', 'user'], async (ctx) => {
       try {
         if (!ctx.from) return;
@@ -105,17 +111,13 @@ async function runBot() {
             break;
 
           case ProcessStage.DISTRIBUTION:
-            if (!user) {
-              return;
-            }
+            if (!user) return;
             targetScreenId = 'student_distribution';
             break;
 
           case ProcessStage.TICKETING:
           case ProcessStage.FINISHED:
-            if (!user) {
-              return;
-            }
+            if (!user) return;
             targetScreenId = 'student_ticketing';
             break;
 
@@ -142,9 +144,9 @@ async function runBot() {
       }
     });
 
-    // =========================================================================
+    // =======================================================================
     // КОМАНДА: /editor (Панель Проверки Редактора)
-    // =========================================================================
+    // =======================================================================
     bot.command('editor', async (ctx) => {
       try {
         if (!ctx.from) return;
@@ -155,7 +157,6 @@ async function runBot() {
         }
 
         const user = await studentService.getUserById(ctx.from.id);
-        
         if (!user || user.editor !== 1) {
           return;
         }
@@ -195,30 +196,32 @@ async function runBot() {
       }
     });
 
+    // =======================================================================
+    // РОУТЕР ЭКРАНОВ (СООБЩЕНИЯ И INLINE-КНОПКИ)
+    // =======================================================================
     bot.on(['message', 'callback_query:data'], async (ctx) => {
       try {
         const currentScreenId = ctx.session.currentScreenId;
         const currentScreen = screenFactory.create(currentScreenId);
 
         const userMessageId = ctx.message?.message_id;
-
         const nextScreen = await currentScreen.handle(ctx);
 
         if (nextScreen) {
           ctx.session.currentScreenId = nextScreen.id;
+
           let notice = ctx.session.meta?.notice;
           if (notice) {
             notice = notice.replace(/_/g, '\\_');
-          }
-          if (ctx.session.meta?.notice) {
             delete ctx.session.meta.notice;
           }
+
           const renderResult = await nextScreen.render(ctx, notice);
 
           if (userMessageId && !renderResult.keepUserMessage) {
             try {
               await ctx.api.deleteMessage(ctx.chat!.id, userMessageId);
-            } catch (deleteError) {}
+            } catch {}
           }
 
           if (renderResult.displayType === 'main_menu') {
@@ -231,10 +234,10 @@ async function runBot() {
               isForceNew,
               renderResult.documentPath
             );
-          } else { // При необходимости добавить метод для управления билетами
+          } else {
             await ctx.reply(renderResult.text, {
               reply_markup: renderResult.reply_markup,
-              parse_mode: 'Markdown'
+              parse_mode: 'Markdown',
             });
           }
         }
@@ -253,3 +256,4 @@ async function runBot() {
 }
 
 runBot();
+

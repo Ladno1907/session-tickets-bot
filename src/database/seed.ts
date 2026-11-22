@@ -10,6 +10,9 @@ function generateFio(): string {
   return `${lastName} ${firstName}`;
 }
 
+/**
+ * CLI-утилита (`npm run db:seed`) для заполнения БД тестовыми студентами и заявками редакторов.
+ */
 export async function seedFakeData(count: number = 25): Promise<void> {
   console.log(`⏳ Старт генерации ${count} фейковых пользователей...`);
 
@@ -20,7 +23,7 @@ export async function seedFakeData(count: number = 25): Promise<void> {
       await trx.insertInto('subjects').values([
         { subjectName: 'Высшая Математика' },
         { subjectName: 'Операционные Системы' },
-        { subjectName: 'Базы Данных' }
+        { subjectName: 'Базы Данных' },
       ]).execute();
       subjects = await trx.selectFrom('subjects').selectAll().execute();
     }
@@ -45,7 +48,7 @@ export async function seedFakeData(count: number = 25): Promise<void> {
         registeredAt: new Date(Date.now() - i * 60000).toISOString(),
         student: 1,
         editor: 0,
-        chiefEditor: 0
+        chiefEditor: 0,
       }).execute();
 
       const shuffledSubjects = [...subjects].sort(() => 0.5 - Math.random());
@@ -54,7 +57,7 @@ export async function seedFakeData(count: number = 25): Promise<void> {
       for (const sub of selectedForPrep) {
         await trx.insertInto('registrations_for_subjects').values({
           telegramId: fakeTelegramId,
-          subjectId: sub.subjectId
+          subjectId: sub.subjectId,
         }).execute();
       }
 
@@ -62,7 +65,7 @@ export async function seedFakeData(count: number = 25): Promise<void> {
         const targetSub = subjects[Math.floor(Math.random() * subjects.length)];
         await trx.insertInto('editor_requests').values({
           telegramId: fakeTelegramId,
-          subjectId: targetSub.subjectId
+          subjectId: targetSub.subjectId,
         }).execute();
       }
     }

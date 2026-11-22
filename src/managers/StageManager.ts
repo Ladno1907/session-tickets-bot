@@ -6,6 +6,10 @@ import { ProcessConfigRepository } from '../database/repositories/ProcessConfigR
 import { ProcessConfig, ProcessStage } from '../types/entities.js';
 import { distributionService } from '../services/DistributionService.js';
 
+/**
+ * Менеджер жизненного цикла и этапов подготовки сессии (`PREPARATION -> REGISTRATION -> DISTRIBUTION -> TICKETING -> FINISHED`).
+ * Отвечает за проверку дедлайнов, защиту от параллельных переходов и запуск каскадных триггеров при смене стадий.
+ */
 export class StageManager {
   private isTransitioning = false;
 
@@ -13,6 +17,13 @@ export class StageManager {
     private processConfigRepository: ProcessConfigRepository = new ProcessConfigRepository(),
   ) {}
 
+  // =========================================================================
+  // ОПРЕДЕЛЕНИЕ И ПЕРЕКЛЮЧЕНИЕ ЭТАПОВ
+  // =========================================================================
+
+  /**
+   * Быстро вычисляет актуальный этап процесса на основе дедлайнов и сохранённого статуса в БД.
+   */
   public async getCurrentStageFast(): Promise<ProcessStage> {
     const configData = await this.processConfigRepository.findGlobalConfig();
     if (!configData) {
@@ -23,6 +34,10 @@ export class StageManager {
     return this.determineCurrentStage(configData);
   }
 
+  /**
+   * Проверяет наступление дедлайнов и последовательно переводит систему на целевой этап,
+   * выполняя триггеры каждого промежуточного перехода под блокировкой `isTransitioning`.
+   */
   public async checkAndTransition(bot: Bot<MyContext>): Promise<void> {
     if (this.isTransitioning) return;
     this.isTransitioning = true;
@@ -50,6 +65,9 @@ export class StageManager {
     }
   }
 
+  /**
+   * Запускает фоновый периодический таймер проверки дедлайнов с интервалом `config.checkInterval`.
+   */
   public startPeriodicCheck(bot: Bot<MyContext>): void {
     const check = async () => {
       try {
@@ -62,28 +80,9 @@ export class StageManager {
     setTimeout(check, config.checkInterval);
   }
 
-  private parseDeadlineMsk23(isoStr?: string): Date | null {
-    if (!isoStr) return null;
-    const d = new Date(isoStr);
-    if (d.getUTCHours() === 0 && d.getUTCMinutes() === 0) {
-      d.setUTCHours(20, 0, 0, 0);
-    }
-    return d;
-  }
-
-  private determineCurrentStage(configData: ProcessConfig): ProcessStage {
-    const now = new Date();
-    const regEnd = this.parseDeadlineMsk23(configData.registrationEnd);
-    const distEnd = this.parseDeadlineMsk23(configData.distributionEnd);
-    const tickEnd = this.parseDeadlineMsk23(configData.ticketingEnd);
-
-    if (tickEnd && now >= tickEnd) return ProcessStage.FINISHED;
-    if (distEnd && now >= distEnd) return ProcessStage.TICKETING;
-    if (regEnd && now >= regEnd) return ProcessStage.DISTRIBUTION;
-
-    return configData.currentStage;
-  }
-
+  /**
+   * Возвращает следующий по порядку этап жизненного цикла или `null`, если процесс завершён.
+   */
   public getNextStage(currentStage: ProcessStage): ProcessStage | null {
     switch (currentStage) {
       case ProcessStage.PREPARATION: return ProcessStage.REGISTRATION;
@@ -97,7 +96,18 @@ export class StageManager {
     }
   }
 
-  public async executeTransitionEffects(oldStage: ProcessStage, newStage: ProcessStage, bot: Bot<MyContext>): Promise<void> {
+  // =========================================================================
+  // КАСКАДНЫЕ ТРИГГЕРЫ ПРИ СМЕНЕ ЭТАПОВ
+  // =========================================================================
+
+  /**
+   * Выполняет бизнес-логику и рассылки при переходе с `oldStage` на `newStage`.
+   */
+  public async executeTransitionEffects(
+    oldStage: ProcessStage,
+    newStage: ProcessStage,
+    bot: Bot<MyContext>
+  ): Promise<void> {
     console.log(`StageManager: Выполнение триггеров перехода ${oldStage} -> ${newStage}`);
 
     if (oldStage === ProcessStage.PREPARATION && newStage === ProcessStage.REGISTRATION) {
@@ -147,7 +157,38 @@ export class StageManager {
       );
     }
   }
+
+  // =========================================================================
+  // ВСПОМОГАТЕЛЬНЫЕ ПРИВАТНЫЕ МЕТОДЫ
+  // =========================================================================
+
+  /**
+   * Вычисляет целевой этап по текущему времени и установленным дедлайнам.
+   */
+  private determineCurrentStage(configData: ProcessConfig): ProcessStage {
+    const now = new Date();
+    const regEnd = this.parseDeadlineMsk23(configData.registrationEnd);
+    const distEnd = this.parseDeadlineMsk23(configData.distributionEnd);
+    const tickEnd = this.parseDeadlineMsk23(configData.ticketingEnd);
+
+    if (tickEnd && now >= tickEnd) return ProcessStage.FINISHED;
+    if (distEnd && now >= distEnd) return ProcessStage.TICKETING;
+    if (regEnd && now >= regEnd) return ProcessStage.DISTRIBUTION;
+
+    return configData.currentStage;
+  }
+
+  /**
+   * Парсит ISO-дату дедлайна; если указана полночь UTC (`00:00`), интерпретирует её как `23:00` МСК (`20:00` UTC).
+   */
+  private parseDeadlineMsk23(isoStr?: string): Date | null {
+    if (!isoStr) return null;
+    const d = new Date(isoStr);
+    if (d.getUTCHours() === 0 && d.getUTCMinutes() === 0) {
+      d.setUTCHours(20, 0, 0, 0);
+    }
+    return d;
+  }
 }
 
 export const stageManager = new StageManager();
-

@@ -1,12 +1,18 @@
-import { StorageAdapter } from 'grammy'; 
+import { StorageAdapter } from 'grammy';
 import { SessionRepository } from '../repositories/SessionRepo.js';
 
+/**
+ * Адаптер хранения сессий grammY в SQLite поверх {@link SessionRepository}.
+ */
 export class SQLiteSessionAdapter<T> implements StorageAdapter<T> {
   constructor(private sessionRepository: SessionRepository = new SessionRepository()) {}
 
+  /**
+   * Читает и десериализует сессию пользователя по строковому ключу Telegram ID.
+   */
   async read(key: string): Promise<T | undefined> {
     const telegramId = parseInt(key, 10);
-    
+
     if (isNaN(telegramId)) {
       console.error(`SQLiteSessionAdapter: Invalid key format (not a number): ${key}`);
       return undefined;
@@ -24,6 +30,9 @@ export class SQLiteSessionAdapter<T> implements StorageAdapter<T> {
     }
   }
 
+  /**
+   * Сериализует и сохраняет (upsert) сессию пользователя в базу данных.
+   */
   async write(key: string, value: T): Promise<void> {
     const telegramId = parseInt(key, 10);
     if (isNaN(telegramId)) {
@@ -40,6 +49,9 @@ export class SQLiteSessionAdapter<T> implements StorageAdapter<T> {
     }
   }
 
+  /**
+   * Удаляет сессию пользователя из базы данных по ключу.
+   */
   async delete(key: string): Promise<void> {
     const telegramId = parseInt(key, 10);
     if (isNaN(telegramId)) {
@@ -56,3 +68,4 @@ export class SQLiteSessionAdapter<T> implements StorageAdapter<T> {
 }
 
 export const sqliteSessionAdapter = new SQLiteSessionAdapter();
+

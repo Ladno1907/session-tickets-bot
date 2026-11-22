@@ -1,9 +1,11 @@
+/** Роли пользователей в системе подготовки билетов. */
 export enum UserRole {
   STUDENT = 'student',
   EDITOR = 'editor',
   CHIEF_EDITOR = 'chief_editor',
 }
 
+/** Последовательные этапы жизненного цикла подготовки к сессии. */
 export enum ProcessStage {
   PREPARATION = 'preparation',
   REGISTRATION = 'registration',
@@ -12,14 +14,13 @@ export enum ProcessStage {
   FINISHED = 'finished',
 }
 
+/** Статусы жизненного цикла экзаменационного билета. */
 export enum TicketStatus {
   IN_PROGRESS = 'in_progress',
   ON_CHECK = 'on_check',
   APPROVED = 'approved',
   ON_REWORK = 'on_rework',
 }
-
-
 
 export interface User {
   telegramId: number;
@@ -78,3 +79,4 @@ export interface UserMainMenuState {
   messageId: number;
   lastUpdated: string;
 }
+

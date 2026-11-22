@@ -9,21 +9,25 @@ import { AdminPrepDeleteSubjectScreen } from './admin-prep-delete-subject.screen
 import { AdminRegistrationScreen } from '../registration/admin-registration.screen.js';
 import { chiefEditorService } from '../../../services/ChiefEditorService.js';
 
+/**
+ * Главный экран Администратора на подготовительном этапе (`PREPARATION`).
+ * Позволяет задать дедлайны, загрузить или удалить предметы из Google Sheets и запустить регистрацию.
+ */
 export class AdminPreparationScreen implements BaseScreen {
   readonly id = 'admin_preparation';
 
   async render(ctx: MyContext, notice?: string): Promise<RenderResult> {
     if (!ctx.from) {
-      throw new Error("Критическая ошибка: не удалось определить пользователя в контексте grammY.");
+      throw new Error('Критическая ошибка: не удалось определить пользователя в контексте grammY.');
     }
 
     const deadlinesPart = await getDeadlinesText(ctx.from.id);
     const subjectsPart = await getPreparationStatusText(ctx.from.id);
 
-    let text = `🛠 *Настройка подготовительного этапа*\n\n` + 
-                     `${deadlinesPart}\n` + 
-                     `${subjectsPart}\n` + 
-                     `Выберите действие:`;
+    let text = `🛠 *Настройка подготовительного этапа*\n\n` +
+               `${deadlinesPart}\n` +
+               `${subjectsPart}\n` +
+               `Выберите действие:`;
 
     if (notice) {
       text += `\n\n${notice}`;
@@ -49,7 +53,6 @@ export class AdminPreparationScreen implements BaseScreen {
     if (!data) return null;
 
     await ctx.answerCallbackQuery();
-
 
     if (data === 'set_reg_end') {
       ctx.session.meta.targetField = 'registrationEnd';
@@ -81,3 +84,4 @@ export class AdminPreparationScreen implements BaseScreen {
     return null;
   }
 }
+

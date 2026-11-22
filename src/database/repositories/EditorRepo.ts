@@ -6,6 +6,9 @@ type InsertableEditor = Insertable<EditorsForSubjectTable>;
 type UpdateableEditor = Updateable<EditorsForSubjectTable>;
 type SelectableEditor = Selectable<EditorsForSubjectTable>;
 
+/**
+ * Репозиторий для управления привязками редакторов к предметам (`editors_for_subjects`).
+ */
 export class EditorRepository extends BaseRepository {
   constructor(db?: DbOrTrx) {
     super(db);
@@ -15,6 +18,13 @@ export class EditorRepository extends BaseRepository {
     return new EditorRepository(trx);
   }
 
+  // =========================================================================
+  // ЧТЕНИЕ ДАННЫХ (SELECT)
+  // =========================================================================
+
+  /**
+   * Найти запись о редакторстве пользователя по конкретному предмету.
+   */
   async findByUserAndSubject(telegramId: number, subjectId: number): Promise<SelectableEditor | null> {
     return (
       (await this.db
@@ -26,6 +36,9 @@ export class EditorRepository extends BaseRepository {
     );
   }
 
+  /**
+   * Получить все предметы, закреплённые за конкретным редактором.
+   */
   async findByUserId(telegramId: number): Promise<SelectableEditor[]> {
     return this.db
       .selectFrom('editors_for_subjects')
@@ -34,6 +47,9 @@ export class EditorRepository extends BaseRepository {
       .execute();
   }
 
+  /**
+   * Получить всех редакторов, закреплённых за конкретным предметом.
+   */
   async findBySubjectId(subjectId: number): Promise<SelectableEditor[]> {
     return this.db
       .selectFrom('editors_for_subjects')
@@ -42,30 +58,9 @@ export class EditorRepository extends BaseRepository {
       .execute();
   }
 
-  async insert(data: InsertableEditor): Promise<void> {
-    await this.db
-      .insertInto('editors_for_subjects')
-      .values(data)
-      .execute();
-  }
-
-  async update(telegramId: number, subjectId: number, patch: UpdateableEditor): Promise<void> {
-    await this.db
-      .updateTable('editors_for_subjects')
-      .set(patch)
-      .where('telegramId', '=', telegramId)
-      .where('subjectId', '=', subjectId)
-      .execute();
-  }
-
-  async remove(telegramId: number, subjectId: number): Promise<void> {
-    await this.db
-      .deleteFrom('editors_for_subjects')
-      .where('telegramId', '=', telegramId)
-      .where('subjectId', '=', subjectId)
-      .execute();
-  }
-
+  /**
+   * Получить список активных редакторов предмета с их именами (для распределения билетов).
+   */
   async findActiveEditorsWithNamesBySubjectId(subjectId: number): Promise<{ telegramId: number; userName: string }[]> {
     return this.db
       .selectFrom('editors_for_subjects')
@@ -77,6 +72,47 @@ export class EditorRepository extends BaseRepository {
       .execute();
   }
 
+  // =========================================================================
+  // ЗАПИСЬ И ОБНОВЛЕНИЕ (INSERT / UPDATE)
+  // =========================================================================
+
+  /**
+   * Назначить пользователя редактором по предмету.
+   */
+  async insert(data: InsertableEditor): Promise<void> {
+    await this.db
+      .insertInto('editors_for_subjects')
+      .values(data)
+      .execute();
+  }
+
+  /**
+   * Обновить запись о редакторстве по пользователю и предмету.
+   */
+  async update(telegramId: number, subjectId: number, patch: UpdateableEditor): Promise<void> {
+    await this.db
+      .updateTable('editors_for_subjects')
+      .set(patch)
+      .where('telegramId', '=', telegramId)
+      .where('subjectId', '=', subjectId)
+      .execute();
+  }
+
+  // =========================================================================
+  // УДАЛЕНИЕ (DELETE)
+  // =========================================================================
+
+  /**
+   * Снять пользователя с роли редактора по конкретному предмету.
+   */
+  async remove(telegramId: number, subjectId: number): Promise<void> {
+    await this.db
+      .deleteFrom('editors_for_subjects')
+      .where('telegramId', '=', telegramId)
+      .where('subjectId', '=', subjectId)
+      .execute();
+  }
 }
 
 export const editorRepository = new EditorRepository();
+

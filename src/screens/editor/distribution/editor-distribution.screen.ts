@@ -1,6 +1,9 @@
 import { BaseScreen, RenderResult } from '../../base.screen.js';
 import { MyContext } from '../../../types/context.js';
 
+/**
+ * Информационный экран Редактора на этапе перепроверки распределения (`DISTRIBUTION`).
+ */
 export class EditorDistributionScreen implements BaseScreen {
   readonly id = 'editor_distribution';
 

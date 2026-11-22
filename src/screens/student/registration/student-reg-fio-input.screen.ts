@@ -3,11 +3,16 @@ import { MyContext } from '../../../types/context.js';
 import { studentService } from '../../../services/StudentService.js';
 import { StudentRegistrationScreen } from './student-registration.screen.js';
 
+/**
+ * Экран первичной регистрации нового участника: запрашивает и сохраняет ФИО.
+ */
 export class StudentRegFioInputScreen implements BaseScreen {
   readonly id = 'student_reg_fio_input';
 
   render(_: MyContext, notice?: string): RenderResult {
-    let text = `📝 *Регистрация участника*\n\nПожалуйста, введите ваши **Фамилию и Имя** одним текстовым сообщением:\n_(Например: Иванов Иван)_`;
+    let text = `📝 *Регистрация участника*\n\n` +
+               `Пожалуйста, введите ваши *Фамилию и Имя* одним текстовым сообщением:\n` +
+               `_(Например: Иванов Иван)_`;
 
     if (notice) {
       text += `\n\n${notice}`;

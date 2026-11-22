@@ -6,7 +6,13 @@ import { TicketStatus } from '../../../types/entities.js';
 import { editorService } from '../../../services/EditorService.js';
 import { ticketFileStorage } from '../../../storage/TicketFileStorage.js';
 import { EditorTicketingScreen } from './editor-ticketing.screen.js';
+import { escapeMarkdown } from '../../../utils/format.js';
 
+/**
+ * Карточка проверки конкретного билета Редактором.
+ * Отправляет прикреплённый файл решения вместе с клавиатурой действий:
+ * принятие (`APPROVED`), отправка на доработку с комментарием (`ON_REWORK`) и замена файла.
+ */
 export class EditorTicketReviewScreen implements BaseScreen {
   readonly id = 'editor_ticket_review';
 
@@ -31,8 +37,9 @@ export class EditorTicketReviewScreen implements BaseScreen {
       };
     }
 
+    // Режим ввода комментария при отправке на доработку
     if (mode === 'rework') {
-      let text = `✏️ *Отправка на доработку — Билет №${ticket.ticketNumber}* (${ticket.subjectName})\n\n` +
+      let text = `✏️ *Отправка на доработку — Билет №${ticket.ticketNumber}* (${escapeMarkdown(ticket.subjectName)})\n\n` +
                  `Напишите текстовым сообщением, что нужно исправить студенту:`;
       if (notice) text += `\n\n${notice}`;
 
@@ -43,8 +50,9 @@ export class EditorTicketReviewScreen implements BaseScreen {
       };
     }
 
+    // Режим загрузки нового файла редактором
     if (mode === 'replace') {
-      let text = `📤 *Замена файла — Билет №${ticket.ticketNumber}* (${ticket.subjectName})\n\n` +
+      let text = `📤 *Замена файла — Билет №${ticket.ticketNumber}* (${escapeMarkdown(ticket.subjectName)})\n\n` +
                  `Отправьте новый *файл (документ)* в этот чат:`;
       if (notice) text += `\n\n${notice}`;
 
@@ -55,17 +63,18 @@ export class EditorTicketReviewScreen implements BaseScreen {
       };
     }
 
+    // Основной режим просмотра карточки билета
     const statusText = ticket.status === TicketStatus.APPROVED ? '🟢 Принят' : '🟡 На проверке';
-    let text = `🎫 *Билет №${ticket.ticketNumber}* (${ticket.subjectName})\n\n` +
-               `❓ *Вопрос:* ${ticket.question.replace(/[_*`]/g, '')}\n` +
-               `👤 *Студент:* ${ticket.studentName || 'Неизвестно'}\n` +
+    let text = `🎫 *Билет №${ticket.ticketNumber}* (${escapeMarkdown(ticket.subjectName)})\n\n` +
+               `❓ *Вопрос:* ${escapeMarkdown(ticket.question)}\n` +
+               `👤 *Студент:* ${escapeMarkdown(ticket.studentName || 'Неизвестно')}\n` +
                `📊 *Статус:* ${statusText}\n`;
 
     if (ticket.studentComment) {
-      text += `\n💬 *Комментарий студента:* ${ticket.studentComment.replace(/[_*`]/g, '')}\n`;
+      text += `\n💬 *Комментарий студента:* ${escapeMarkdown(ticket.studentComment)}\n`;
     }
     if (ticket.editorComment) {
-      text += `\n✏️ *Предыдущее замечание:* ${ticket.editorComment.replace(/[_*`]/g, '')}\n`;
+      text += `\n✏️ *Предыдущее замечание:* ${escapeMarkdown(ticket.editorComment)}\n`;
     }
     if (notice) text += `\n${notice}`;
 
@@ -74,6 +83,7 @@ export class EditorTicketReviewScreen implements BaseScreen {
       const candidatePath = ticketFileStorage.getFilePath(ticket.ticketId, ticket.fileVersion, ticket.fileExtension);
       if (existsSync(candidatePath)) {
         documentPath = candidatePath;
+        // Лимит подписи к документу в Telegram API — 1024 символа
         if (text.length > 1000) {
           text = text.slice(0, 997) + '...';
         }
@@ -103,6 +113,7 @@ export class EditorTicketReviewScreen implements BaseScreen {
     const ticketId = ctx.session.meta?.reviewTicketId;
     const mode = ctx.session.meta?.edActionMode as 'rework' | 'replace' | undefined;
 
+    // 1. Обработка инлайн-кнопок
     if (ctx.callbackQuery?.data) {
       const data = ctx.callbackQuery.data;
       await ctx.answerCallbackQuery();
@@ -126,13 +137,13 @@ export class EditorTicketReviewScreen implements BaseScreen {
           if (ticketView.studentId) {
             await ctx.api.sendMessage(
               ticketView.studentId,
-              `✅ Ваш билет *№${ticketView.ticketNumber}* по предмету *${ticketView.subjectName}* принят редактором!`,
+              `✅ Ваш билет *№${ticketView.ticketNumber}* по предмету *${escapeMarkdown(ticketView.subjectName)}* принят редактором!`,
               { parse_mode: 'Markdown' }
             ).catch(() => {});
           }
           delete ctx.session.meta.reviewTicketId;
           delete ctx.session.meta.edActionMode;
-          ctx.session.meta.notice = `✅ Билет №${ticketView.ticketNumber} (${ticketView.subjectName}) принят!`;
+          ctx.session.meta.notice = `✅ Билет №${ticketView.ticketNumber} (${escapeMarkdown(ticketView.subjectName)}) принят!`;
           return new EditorTicketingScreen();
         } catch (e: any) {
           ctx.session.meta.notice = `❌ Ошибка: ${e.message || e}`;
@@ -151,6 +162,7 @@ export class EditorTicketReviewScreen implements BaseScreen {
       }
     }
 
+    // 2. Ввод комментария для отправки на доработку
     if (mode === 'rework' && ctx.message?.text && ticketId) {
       const comment = ctx.message.text.trim();
       try {
@@ -158,8 +170,8 @@ export class EditorTicketReviewScreen implements BaseScreen {
         if (ticketView.studentId) {
           await ctx.api.sendMessage(
             ticketView.studentId,
-            `🔄 Ваш билет *№${ticketView.ticketNumber}* по предмету *${ticketView.subjectName}* отправлен на доработку.\n\n` +
-            `💬 *Комментарий редактора:* ${comment.replace(/[_*`]/g, '')}`,
+            `🔄 Ваш билет *№${ticketView.ticketNumber}* по предмету *${escapeMarkdown(ticketView.subjectName)}* отправлен на доработку.\n\n` +
+            `💬 *Комментарий редактора:* ${escapeMarkdown(comment)}`,
             { parse_mode: 'Markdown' }
           ).catch(() => {});
         }
@@ -174,6 +186,7 @@ export class EditorTicketReviewScreen implements BaseScreen {
       }
     }
 
+    // 3. Загрузка нового документа при замене файла редактором
     if (mode === 'replace' && ctx.message?.document && ticketId) {
       try {
         const doc = ctx.message.document;

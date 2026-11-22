@@ -8,6 +8,10 @@ import { userMainMenuStateRepository } from '../database/repositories/UserMainMe
 import { sessionRepository } from '../database/repositories/SessionRepo.js';
 import { ticketSheetRepository } from '../database/sheetRepositories/TicketSheetRepository.js';
 
+/**
+ * Сервис автоматического распределения билетов между студентами («змейкой») и редакторами,
+ * выгрузки итоговых ведомостей в Google Sheets и очистки неактивных участников.
+ */
 export class DistributionService {
   constructor(
     private readonly userRepo = userRepository,
@@ -20,23 +24,14 @@ export class DistributionService {
     private readonly ticketSheetRepo = ticketSheetRepository
   ) {}
 
-  private reorderTicketsSnake<T>(tickets: T[]): T[] {
-    const reordered: T[] = [];
-    let left = 0;
-    let right = tickets.length - 1;
-    let takeFromLeft = true;
+  // =========================================================================
+  // РАСПРЕДЕЛЕНИЕ БИЛЕТОВ ПО СТУДЕНТАМ И РЕДАКТОРАМ
+  // =========================================================================
 
-    while (left <= right) {
-      if (takeFromLeft) {
-        reordered.push(tickets[left++]);
-      } else {
-        reordered.push(tickets[right--]);
-      }
-      takeFromLeft = !takeFromLeft;
-    }
-    return reordered;
-  }
-
+  /**
+   * Распределяет билеты каждого предмета между записавшимися студентами алгоритмом «змейки»
+   * (чередование крайних сложных/лёгких билетов) и синхронизирует результат с Google Sheets.
+   */
   public async distributeTicketsToStudents(): Promise<void> {
     const subjectsWithAssignments = await db.transaction().execute(async (trx) => {
       const txSubjectRepo = this.subjectRepo.withTransaction(trx);
@@ -78,14 +73,14 @@ export class DistributionService {
 
             currentSubjectAssignments.push({
               ticketNumber: currentTicket.ticketNumber,
-              studentFio: studentName
+              studentFio: studentName,
             });
           }
         }
 
         results.push({
           sheetName: subject.subjectName,
-          data: currentSubjectAssignments
+          data: currentSubjectAssignments,
         });
       }
 
@@ -102,6 +97,10 @@ export class DistributionService {
     }
   }
 
+  /**
+   * Пропорционально нарезает билеты каждого предмета непрерывными диапазонами между
+   * утверждёнными редакторами и выгружает с объединёнными ячейками в Google Sheets.
+   */
   public async distributeTicketsToEditors(): Promise<void> {
     const editorsWithAssignments = await db.transaction().execute(async (trx) => {
       const txSubjectRepo = this.subjectRepo.withTransaction(trx);
@@ -138,14 +137,14 @@ export class DistributionService {
 
             currentSubjectAssignments.push({
               ticketNumber: currentTicket.ticketNumber,
-              editorFio: editor.userName
+              editorFio: editor.userName,
             });
           }
         }
 
         results.push({
           sheetName: subject.subjectName,
-          data: currentSubjectAssignments
+          data: currentSubjectAssignments,
         });
       }
 
@@ -162,8 +161,16 @@ export class DistributionService {
     }
   }
 
+  // =========================================================================
+  // ОЧИСТКА НЕАКТИВНЫХ УЧАСТНИКОВ
+  // =========================================================================
+
+  /**
+   * Удаляет из базы данных пользователей без назначенных билетов (не являющихся редакторами или админами),
+   * а также их сессии и состояния меню.
+   */
   public async cleanupDeadUsersAndSessions(): Promise<number> {
-    return await db.transaction().execute(async (trx) => {
+    return db.transaction().execute(async (trx) => {
       const txUserRepo = this.userRepo.withTransaction(trx);
       const txMainMenuRepo = this.mainMenuStateRepo.withTransaction(trx);
       const txSessionRepo = this.sessionRepo.withTransaction(trx);
@@ -181,7 +188,32 @@ export class DistributionService {
       return deadUsers.length;
     });
   }
+
+  // =========================================================================
+  // ВСПОМОГАТЕЛЬНЫЕ ПРИВАТНЫЕ МЕТОДЫ
+  // =========================================================================
+
+  /**
+   * Переупорядочивает отсортированный массив билетов «змейкой»
+   * (первый, последний, второй, предпоследний...).
+   */
+  private reorderTicketsSnake<T>(tickets: T[]): T[] {
+    const reordered: T[] = [];
+    let left = 0;
+    let right = tickets.length - 1;
+    let takeFromLeft = true;
+
+    while (left <= right) {
+      if (takeFromLeft) {
+        reordered.push(tickets[left++]);
+      } else {
+        reordered.push(tickets[right--]);
+      }
+      takeFromLeft = !takeFromLeft;
+    }
+
+    return reordered;
+  }
 }
 
 export const distributionService = new DistributionService();
-

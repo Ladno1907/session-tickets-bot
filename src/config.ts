@@ -2,6 +2,9 @@ import { resolve, isAbsolute } from 'node:path';
 import { homedir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 
+/**
+ * Читает обязательную переменную окружения из `process.env` или возвращает `fallback`.
+ */
 function required(name: string, fallback?: string): string {
   const value = process.env[name] ?? fallback;
   if (value === undefined) {
@@ -10,6 +13,9 @@ function required(name: string, fallback?: string): string {
   return value;
 }
 
+/**
+ * Разворачивает символ `~` в домашнюю директорию и преобразует относительный путь в абсолютный.
+ */
 function resolvePath(raw: string): string {
   let expanded = raw;
 
@@ -22,10 +28,16 @@ function resolvePath(raw: string): string {
   return isAbsolute(expanded) ? expanded : resolve(process.cwd(), expanded);
 }
 
+/**
+ * Преобразует абсолютный файловый путь в `file://` URL.
+ */
 function toFileUrl(absolutePath: string): string {
   return pathToFileURL(absolutePath).href;
 }
 
+/**
+ * Глобальная конфигурация приложения, загружаемая из переменных окружения (`.env`).
+ */
 export const config = {
   db: {
     path: resolvePath(required('DB_PATH', './storage.db')),
@@ -35,21 +47,27 @@ export const config = {
   },
 
   googleSheets: {
-    credentialsPath: required('CREDENTIALS_PATH', "./credentials.json"),
+    credentialsPath: required('CREDENTIALS_PATH', './credentials.json'),
     spreadsheetId: required('SPREADSHEET_ID'),
   },
 
   botToken: required('BOT_TOKEN'),
 
+  /** Базовая задержка между массовыми запросами к Telegram API (мс). */
   delayMs: 100,
+
+  /** Максимальное время жизни активного меню до очистки (12 часов). */
   maxMessageAgeMs: 12 * 60 * 60 * 1000,
+
+  /** Интервал фоновой проверки дедлайнов этапов (1 минута). */
   checkInterval: 60 * 1000,
 
+  /** Список Telegram ID главных редакторов (администраторов). */
   chiefEditorIds: required('CHIEF_EDITOR_IDS')
     .split(',')
-    .map(id => id.trim())
-    .filter(id => id !== '')
-    .map(id => parseInt(id, 10))
-    .filter(id => !isNaN(id)),
-
+    .map((id) => id.trim())
+    .filter((id) => id !== '')
+    .map((id) => parseInt(id, 10))
+    .filter((id) => !isNaN(id)),
 } as const;
+

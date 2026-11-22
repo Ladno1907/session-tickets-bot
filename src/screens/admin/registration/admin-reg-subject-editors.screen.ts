@@ -4,44 +4,53 @@ import { MyContext } from '../../../types/context.js';
 import { chiefEditorService } from '../../../services/ChiefEditorService.js';
 import { AdminRegSelectSubjectScreen } from './admin-reg-select-subject.screen.js';
 import { AdminRegEditorFioInputScreen } from './admin-reg-editor-fio-input.screen.js';
+import { escapeMarkdown } from '../../../utils/format.js';
 
+/**
+ * Экран просмотра текущих редакторов и заявок по конкретному предмету
+ * с переходом к назначению или отстранению редакторов.
+ */
 export class AdminRegSubjectEditorsScreen implements BaseScreen {
   readonly id = 'admin_reg_subject_editors';
 
   async render(ctx: MyContext, notice?: string): Promise<RenderResult> {
     if (!ctx.from) {
-      throw new Error("Критическая ошибка: не удалось определить пользователя в контексте grammY.");
+      throw new Error('Критическая ошибка: не удалось определить пользователя в контексте grammY.');
     }
 
     const subjectId = ctx.session.meta?.targetSubjectId;
     const subjects = await chiefEditorService.getAllSubjects(ctx.from.id);
-    const currentSub = subjects.find(s => s.subjectId === subjectId);
+    const currentSub = subjects.find((s) => s.subjectId === subjectId);
 
     if (!currentSub) {
       return {
         displayType: 'main_menu',
         text: '❌ Ошибка: Предмет потерян.',
-        reply_markup: new InlineKeyboard().text('⬅️ Назад', 'back_to_subs_list')
+        reply_markup: new InlineKeyboard().text('⬅️ Назад', 'back_to_subs_list'),
       };
     }
 
-    const editors = await chiefEditorService.getEditorsForSubject(ctx.from!.id, subjectId);
-    const requests = await chiefEditorService.getEditorRequestsForSubject(ctx.from!.id, subjectId);
+    const editors = await chiefEditorService.getEditorsForSubject(ctx.from.id, subjectId);
+    const requests = await chiefEditorService.getEditorRequestsForSubject(ctx.from.id, subjectId);
 
-    let text = `👑 *Редакторы предмета: ${currentSub.subjectName}*\n\n`;
+    let text = `👑 *Редакторы предмета: ${escapeMarkdown(currentSub.subjectName)}*\n\n`;
 
     text += `*Текущие редакторы*:\n`;
     if (editors.length === 0) {
       text += `  ❌ Нет назначенных редакторов\n`;
     } else {
-      editors.forEach((e, i) => text += `  ${i + 1}. ${e.name} (\`ID: ${e.telegramId}\`)\n`);
+      editors.forEach((e, i) => {
+        text += `  ${i + 1}. ${escapeMarkdown(e.name)} (\`ID: ${e.telegramId}\`)\n`;
+      });
     }
 
     text += `\n*Подали заявку через бота (Желающие)*:\n`;
     if (requests.length === 0) {
       text += `  ❌ Нет активных заявок\n`;
     } else {
-      requests.forEach((r, _) => text += `  • ${r.name} (\`ID: ${r.telegramId}\`)\n`);
+      requests.forEach((r) => {
+        text += `  • ${escapeMarkdown(r.name)} (\`ID: ${r.telegramId}\`)\n`;
+      });
     }
 
     if (notice) {
@@ -56,7 +65,7 @@ export class AdminRegSubjectEditorsScreen implements BaseScreen {
     return {
       displayType: 'main_menu',
       text,
-      reply_markup: keyboard
+      reply_markup: keyboard,
     };
   }
 
@@ -73,8 +82,7 @@ export class AdminRegSubjectEditorsScreen implements BaseScreen {
     }
 
     if (data.startsWith('editor_action:')) {
-      const type = data.split(':')[1];
-      ctx.session.meta.editorInputType = type;
+      ctx.session.meta.editorInputType = data.split(':');
       return new AdminRegEditorFioInputScreen();
     }
 

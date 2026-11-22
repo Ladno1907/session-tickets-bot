@@ -4,9 +4,13 @@ import { dirname } from 'node:path';
 import { config } from '../config.js';
 import { db } from './client.js';
 
+/**
+ * Создаёт файл директории БД (если отсутствует) и выполняет идемпотентную миграцию всех таблиц SQLite.
+ */
 export async function migrate(): Promise<void> {
   await mkdir(dirname(config.db.path), { recursive: true });
 
+  // Сессии пользователей grammY
   await db.schema
     .createTable('sessions')
     .ifNotExists()
@@ -15,6 +19,7 @@ export async function migrate(): Promise<void> {
     .addColumn('updated_at', 'text', (col) => col.notNull())
     .execute();
 
+  // Глобальная конфигурация этапов и дедлайнов
   await db.schema
     .createTable('process_config')
     .ifNotExists()
@@ -27,6 +32,7 @@ export async function migrate(): Promise<void> {
     .addColumn('ticketing_end', 'text')
     .execute();
 
+  // Учебные дисциплины
   await db.schema
     .createTable('subjects')
     .ifNotExists()
@@ -34,6 +40,7 @@ export async function migrate(): Promise<void> {
     .addColumn('subject_name', 'text', (col) => col.notNull().unique())
     .execute();
 
+  // Зарегистрированные участники и их роли
   await db.schema
     .createTable('users')
     .ifNotExists()
@@ -45,6 +52,7 @@ export async function migrate(): Promise<void> {
     .addColumn('chief_editor', 'integer', (col) => col.notNull().defaultTo(0).check(sql`chief_editor IN (0, 1)`))
     .execute();
 
+  // Записи студентов на подготовку билетов по предметам
   await db.schema
     .createTable('registrations_for_subjects')
     .ifNotExists()
@@ -57,6 +65,7 @@ export async function migrate(): Promise<void> {
     .addPrimaryKeyConstraint('pk_registrations_for_subjects', ['telegram_id', 'subject_id'])
     .execute();
 
+  // Утверждённые редакторы по предметам
   await db.schema
     .createTable('editors_for_subjects')
     .ifNotExists()
@@ -69,6 +78,7 @@ export async function migrate(): Promise<void> {
     .addPrimaryKeyConstraint('pk_edits_for_subjects', ['telegram_id', 'subject_id'])
     .execute();
 
+  // Заявки студентов на получение прав редактора
   await db.schema
     .createTable('editor_requests')
     .ifNotExists()
@@ -81,6 +91,7 @@ export async function migrate(): Promise<void> {
     .addPrimaryKeyConstraint('pk_editor_requests', ['telegram_id', 'subject_id'])
     .execute();
 
+  // Банк билетов, их распределение и статусы проверки
   await db.schema
     .createTable('tickets')
     .ifNotExists()
@@ -106,6 +117,7 @@ export async function migrate(): Promise<void> {
     .addColumn('file_extension', 'text')
     .execute();
 
+  // Активные сообщения главного меню пользователей в Telegram
   await db.schema
     .createTable('user_main_menu_states')
     .ifNotExists()
@@ -118,3 +130,4 @@ export async function migrate(): Promise<void> {
 
   console.log('Миграции выполнены успешно.');
 }
+

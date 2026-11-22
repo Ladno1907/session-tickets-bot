@@ -6,6 +6,9 @@ type InsertableUser = Insertable<UsersTable>;
 type UpdateableUser = Updateable<UsersTable>;
 type SelectableUser = Selectable<UsersTable>;
 
+/**
+ * Репозиторий пользователей и их ролевых флагов (`users`).
+ */
 export class UserRepository extends BaseRepository {
   constructor(db?: DbOrTrx) {
     super(db);
@@ -15,20 +18,23 @@ export class UserRepository extends BaseRepository {
     return new UserRepository(trx);
   }
 
+  // =========================================================================
+  // ЧТЕНИЕ И СТАТИСТИКА (SELECT)
+  // =========================================================================
+
+  /**
+   * Получить всех зарегистрированных пользователей системы.
+   */
   async findAll(): Promise<SelectableUser[]> {
-    return this.db.selectFrom('users').selectAll().execute();
-  }
-
-  async findByIds(telegramIds: number[]): Promise<SelectableUser[]> {
-    if (telegramIds.length === 0) return [];
-
     return this.db
       .selectFrom('users')
       .selectAll()
-      .where('telegramId', 'in', telegramIds)
       .execute();
   }
 
+  /**
+   * Найти пользователя по его Telegram ID.
+   */
   async findById(telegramId: number): Promise<SelectableUser | null> {
     return (
       (await this.db
@@ -39,6 +45,43 @@ export class UserRepository extends BaseRepository {
     );
   }
 
+  /**
+   * Получить список пользователей по массиву Telegram ID.
+   */
+  async findByIds(telegramIds: number[]): Promise<SelectableUser[]> {
+    if (telegramIds.length === 0) return [];
+
+    return this.db
+      .selectFrom('users')
+      .selectAll()
+      .where('telegramId', 'in', telegramIds)
+      .execute();
+  }
+
+  /**
+   * Найти «неактивных» пользователей без назначенных билетов, не являющихся редакторами или админами.
+   */
+  async findDeadUsers(): Promise<SelectableUser[]> {
+    return this.db
+      .selectFrom('users')
+      .selectAll()
+      .where('chiefEditor', '=', 0)
+      .where('editor', '=', 0)
+      .where((eb) =>
+        eb.not(
+          eb.exists(
+            eb.selectFrom('tickets')
+              .select('tickets.ticketId')
+              .whereRef('tickets.studentId', '=', 'users.telegramId')
+          )
+        )
+      )
+      .execute();
+  }
+
+  /**
+   * Подсчитать количество активных студентов (`student = 1`).
+   */
   async countActiveStudents(): Promise<number> {
     const res = await this.db
       .selectFrom('users')
@@ -48,6 +91,9 @@ export class UserRepository extends BaseRepository {
     return Number(res?.count ?? 0);
   }
 
+  /**
+   * Подсчитать количество утверждённых редакторов (`editor = 1`).
+   */
   async countActiveEditors(): Promise<number> {
     const res = await this.db
       .selectFrom('users')
@@ -57,22 +103,13 @@ export class UserRepository extends BaseRepository {
     return Number(res?.count ?? 0);
   }
 
-  async findDeadUsers(): Promise<SelectableUser[]> {
-    return await this.db
-      .selectFrom('users')
-      .selectAll()
-      .where('chiefEditor', '=', 0)
-      .where('editor', '=', 0)
-      .where((eb) => eb.not(
-        eb.exists(
-          eb.selectFrom('tickets')
-            .select('tickets.ticketId')
-            .whereRef('tickets.studentId', '=', 'users.telegramId')
-        )
-      ))
-      .execute();
-  }
+  // =========================================================================
+  // ЗАПИСЬ И ОБНОВЛЕНИЕ (INSERT / UPDATE)
+  // =========================================================================
 
+  /**
+   * Зарегистрировать нового пользователя.
+   */
   async insert(data: InsertableUser): Promise<void> {
     await this.db
       .insertInto('users')
@@ -80,6 +117,9 @@ export class UserRepository extends BaseRepository {
       .executeTakeFirstOrThrow();
   }
 
+  /**
+   * Обновить профиль или роли пользователя по его Telegram ID.
+   */
   async update(telegramId: number, patch: UpdateableUser): Promise<void> {
     await this.db
       .updateTable('users')
@@ -88,10 +128,22 @@ export class UserRepository extends BaseRepository {
       .execute();
   }
 
-  async remove(telegramId: number): Promise<void> {
-    await this.db.deleteFrom('users').where('telegramId', '=', telegramId).execute();
+  /**
+   * Пакетно обновить пользователей по списку Telegram ID.
+   */
+  async updateByIds(telegramIds: number[], patch: UpdateableUser): Promise<void> {
+    if (telegramIds.length === 0) return;
+
+    await this.db
+      .updateTable('users')
+      .set(patch)
+      .where('telegramId', 'in', telegramIds)
+      .execute();
   }
 
+  /**
+   * Массово обновить записи пользователей, удовлетворяющие условию `whereClause`.
+   */
   async updateAll(whereClause: Partial<SelectableUser>, patch: UpdateableUser): Promise<void> {
     let query = this.db.updateTable('users').set(patch);
 
@@ -102,15 +154,20 @@ export class UserRepository extends BaseRepository {
     await query.execute();
   }
 
-  async updateByIds(telegramIds: number[], patch: UpdateableUser): Promise<void> {
-    if (telegramIds.length === 0) return;
+  // =========================================================================
+  // УДАЛЕНИЕ (DELETE)
+  // =========================================================================
 
+  /**
+   * Удалить пользователя по его Telegram ID.
+   */
+  async remove(telegramId: number): Promise<void> {
     await this.db
-      .updateTable('users')
-      .set(patch)
-      .where('telegramId', 'in', telegramIds)
+      .deleteFrom('users')
+      .where('telegramId', '=', telegramId)
       .execute();
   }
 }
 
 export const userRepository = new UserRepository();
+

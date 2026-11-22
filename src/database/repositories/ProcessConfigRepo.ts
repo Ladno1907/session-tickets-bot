@@ -7,6 +7,9 @@ type InsertableConfig = Insertable<ProcessConfigTable>;
 type UpdateableConfig = Updateable<ProcessConfigTable>;
 type SelectableConfig = Selectable<ProcessConfigTable>;
 
+/**
+ * Репозиторий глобальной конфигурации этапов и дедлайнов (`process_config`).
+ */
 export class ProcessConfigRepository extends BaseRepository {
   constructor(db?: DbOrTrx) {
     super(db);
@@ -16,6 +19,30 @@ export class ProcessConfigRepository extends BaseRepository {
     return new ProcessConfigRepository(trx);
   }
 
+  // =========================================================================
+  // ЧТЕНИЕ ДАННЫХ (SELECT)
+  // =========================================================================
+
+  /**
+   * Получить глобальную конфигурацию процесса (`id = 'global'`).
+   */
+  async findGlobalConfig(): Promise<SelectableConfig | null> {
+    return (
+      (await this.db
+        .selectFrom('process_config')
+        .selectAll()
+        .where('id', '=', 'global')
+        .executeTakeFirst()) ?? null
+    );
+  }
+
+  // =========================================================================
+  // ЗАПИСЬ И ОБНОВЛЕНИЕ (INSERT / UPDATE)
+  // =========================================================================
+
+  /**
+   * Инициализировать конфигурацию по умолчанию (стадия `PREPARATION`), если она отсутствует.
+   */
   async insertDefaultIfNotExists(): Promise<SelectableConfig> {
     let existingConfig = await this.findGlobalConfig();
     if (!existingConfig) {
@@ -30,7 +57,7 @@ export class ProcessConfigRepository extends BaseRepository {
       await this.insert(defaultConfig);
       existingConfig = await this.findGlobalConfig();
       if (!existingConfig) {
-        throw new Error("ProcessConfigRepository: Не удалось получить только что вставленную конфигурацию.");
+        throw new Error('ProcessConfigRepository: Не удалось получить только что вставленную конфигурацию.');
       }
     } else {
       console.log('ProcessConfigRepository: Дефолтная конфигурация уже существует.');
@@ -38,16 +65,9 @@ export class ProcessConfigRepository extends BaseRepository {
     return existingConfig;
   }
 
-  async findGlobalConfig(): Promise<SelectableConfig | null> {
-    return (
-      (await this.db
-        .selectFrom('process_config')
-        .selectAll()
-        .where('id', '=', 'global')
-        .executeTakeFirst()) ?? null
-    );
-  }
-
+  /**
+   * Вставить запись конфигурации процесса.
+   */
   async insert(data: InsertableConfig): Promise<void> {
     await this.db
       .insertInto('process_config')
@@ -55,6 +75,9 @@ export class ProcessConfigRepository extends BaseRepository {
       .execute();
   }
 
+  /**
+   * Обновить поля глобальной конфигурации (текущую стадию или дедлайны).
+   */
   async update(patch: UpdateableConfig): Promise<void> {
     await this.db
       .updateTable('process_config')
@@ -63,6 +86,13 @@ export class ProcessConfigRepository extends BaseRepository {
       .execute();
   }
 
+  // =========================================================================
+  // УДАЛЕНИЕ (DELETE)
+  // =========================================================================
+
+  /**
+   * Удалить глобальную конфигурацию процесса.
+   */
   async remove(): Promise<void> {
     await this.db
       .deleteFrom('process_config')
@@ -72,3 +102,4 @@ export class ProcessConfigRepository extends BaseRepository {
 }
 
 export const processConfigRepository = new ProcessConfigRepository();
+

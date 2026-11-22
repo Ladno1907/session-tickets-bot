@@ -13,6 +13,11 @@ import { ticketSheetRepository } from '../database/sheetRepositories/TicketSheet
 import { ProcessStage, User, TicketStatus } from '../types/entities.js';
 import type { TicketWithSubjectView } from '../database/repositories/TicketViewRepo.js';
 
+/**
+ * Сервис бизнес-логики Студента (участника подготовки билетов).
+ * Управляет первичной регистрацией по ФИО, выбором предметов, подачей заявок в редакторы,
+ * просмотром назначенных билетов и отправкой файлов решений.
+ */
 export class StudentService {
   constructor(
     private readonly userRepo = userRepository,
@@ -24,16 +29,24 @@ export class StudentService {
     private readonly ticketSheetRepo = ticketSheetRepository,
   ) {}
 
-  async getAllUsers(): Promise<User[]> {
-    const usersFromDb = await this.userRepo.findAll();
+  // =========================================================================
+  // ПРОФИЛЬ И ПЕРВИЧНАЯ РЕГИСТРАЦИЯ
+  // =========================================================================
 
-    return usersFromDb;
+  /**
+   * Возвращает список всех зарегистрированных пользователей.
+   */
+  async getAllUsers(): Promise<User[]> {
+    return this.userRepo.findAll();
   }
 
+  /**
+   * Находит профиль пользователя по его Telegram ID.
+   */
   async getUserById(telegramId: number): Promise<User | null> {
     const userRow = await this.userRepo.findById(telegramId);
     if (!userRow) return null;
-    
+
     return {
       telegramId: userRow.telegramId,
       userName: userRow.userName,
@@ -44,6 +57,10 @@ export class StudentService {
     };
   }
 
+  /**
+   * Регистрирует нового пользователя по ФИО на этапе `REGISTRATION`
+   * (изначально `student = 0` до выбора предметов).
+   */
   async registerUser(telegramId: number, name: string): Promise<void> {
     const currentStage = await stageManager.getCurrentStageFast();
     if (currentStage !== ProcessStage.REGISTRATION) {
@@ -52,7 +69,7 @@ export class StudentService {
 
     const existingUser = await this.userRepo.findById(telegramId);
     if (existingUser) {
-      throw new Error("Пользователь уже зарегистрирован.");
+      throw new Error('Пользователь уже зарегистрирован.');
     }
 
     const isChiefEditor = config.chiefEditorIds.includes(telegramId) ? 1 : 0;
@@ -69,10 +86,20 @@ export class StudentService {
     await this.userRepo.insert(newUser);
   }
 
+  // =========================================================================
+  // ВЫБОР ПРЕДМЕТОВ И ЗАЯВКИ В РЕДАКТОРЫ (ЭТАП REGISTRATION)
+  // =========================================================================
+
+  /**
+   * Возвращает список всех доступных учебных предметов.
+   */
   async getAllSubjects(): Promise<{ subjectId: number; subjectName: string }[]> {
-    return await this.subjectRepo.findAll();
+    return this.subjectRepo.findAll();
   }
 
+  /**
+   * Возвращает список предметов, выбранных студентом для подготовки билетов.
+   */
   async getSelectedSubjectsForPreparation(telegramId: number): Promise<{ id: number; name: string }[]> {
     const currentStage = await stageManager.getCurrentStageFast();
     if (currentStage !== ProcessStage.REGISTRATION) {
@@ -81,21 +108,20 @@ export class StudentService {
 
     const user = await this.userRepo.findById(telegramId);
     if (!user) {
-      throw new Error("Пользователь не найден.");
+      throw new Error('Пользователь не найден.');
     }
 
     const registrationRecords = await this.registrationRepo.findByUserId(telegramId);
-    const subjectIds = registrationRecords.map(reg => reg.subjectId);
-
-    if (subjectIds.length === 0) {
-      return [];
-    }
+    const subjectIds = registrationRecords.map((reg) => reg.subjectId);
+    if (subjectIds.length === 0) return [];
 
     const subjects = await this.subjectRepo.findByIds(subjectIds);
-
-    return subjects.map(s => ({ id: s.subjectId, name: s.subjectName }));
+    return subjects.map((s) => ({ id: s.subjectId, name: s.subjectName }));
   }
 
+  /**
+   * Возвращает список предметов, на которые пользователь подал заявку в редакторы.
+   */
   async getRequestedEditorSubjects(telegramId: number): Promise<{ id: number; name: string }[]> {
     const currentStage = await stageManager.getCurrentStageFast();
     if (currentStage !== ProcessStage.REGISTRATION) {
@@ -104,21 +130,21 @@ export class StudentService {
 
     const user = await this.userRepo.findById(telegramId);
     if (!user) {
-      throw new Error("Пользователь не найден.");
+      throw new Error('Пользователь не найден.');
     }
 
     const requestRecords = await this.editorRequestRepo.findByUserId(telegramId);
-    const subjectIds = requestRecords.map(req => req.subjectId);
-
-    if (subjectIds.length === 0) {
-      return [];
-    }
+    const subjectIds = requestRecords.map((req) => req.subjectId);
+    if (subjectIds.length === 0) return [];
 
     const subjects = await this.subjectRepo.findByIds(subjectIds);
-
-    return subjects.map(s => ({ id: s.subjectId, name: s.subjectName }));
+    return subjects.map((s) => ({ id: s.subjectId, name: s.subjectName }));
   }
 
+  /**
+   * Синхронизирует выбранные студентом предметы подготовки
+   * и обновляет флаг `users.student` (`1` если > 0, иначе `0`).
+   */
   async selectSubjectsForPreparation(telegramId: number, subjectIds: number[]): Promise<void> {
     const currentStage = await stageManager.getCurrentStageFast();
     if (currentStage !== ProcessStage.REGISTRATION) {
@@ -127,16 +153,16 @@ export class StudentService {
 
     const user = await this.userRepo.findById(telegramId);
     if (!user) {
-      throw new Error("Пользователь не найден.");
+      throw new Error('Пользователь не найден.');
     }
 
     const currentRegistrations = await this.registrationRepo.findByUserId(telegramId);
-    const currentSubjectIds = new Set(currentRegistrations.map(reg => reg.subjectId));
+    const currentSubjectIds = new Set(currentRegistrations.map((reg) => reg.subjectId));
 
     const idsToDelete = currentSubjectIds.size > 0
-      ? Array.from(currentSubjectIds).filter(id => !subjectIds.includes(id))
+      ? Array.from(currentSubjectIds).filter((id) => !subjectIds.includes(id))
       : [];
-    const idsToInsert = subjectIds.filter(id => !currentSubjectIds.has(id));
+    const idsToInsert = subjectIds.filter((id) => !currentSubjectIds.has(id));
 
     const finalSubjectsCount = currentSubjectIds.size - idsToDelete.length + idsToInsert.length;
     const isStudentStatus: 0 | 1 = finalSubjectsCount > 0 ? 1 : 0;
@@ -162,24 +188,27 @@ export class StudentService {
     });
   }
 
+  /**
+   * Синхронизирует список предметов, по которым пользователь хочет стать редактором.
+   */
   async expressDesireToBeEditor(telegramId: number, subjectIds: number[]): Promise<void> {
     const currentStage = await stageManager.getCurrentStageFast();
     if (currentStage !== ProcessStage.REGISTRATION) {
-      throw new Error(`Желание стать редактором возможно только на этапах '${ProcessStage.REGISTRATION}', текущий этап: '${currentStage}'`);
+      throw new Error(`Желание стать редактором возможно только на этапе '${ProcessStage.REGISTRATION}', текущий этап: '${currentStage}'`);
     }
 
     const user = await this.userRepo.findById(telegramId);
     if (!user) {
-      throw new Error("Пользователь не найден.");
+      throw new Error('Пользователь не найден.');
     }
 
     const currentRequests = await this.editorRequestRepo.findByUserId(telegramId);
-    const currentSubjectIds = new Set(currentRequests.map(req => req.subjectId));
+    const currentSubjectIds = new Set(currentRequests.map((req) => req.subjectId));
 
     const idsToDelete = currentSubjectIds.size > 0
-      ? Array.from(currentSubjectIds).filter(id => !subjectIds.includes(id))
+      ? Array.from(currentSubjectIds).filter((id) => !subjectIds.includes(id))
       : [];
-    const idsToInsert = subjectIds.filter(id => !currentSubjectIds.has(id));
+    const idsToInsert = subjectIds.filter((id) => !currentSubjectIds.has(id));
 
     await db.transaction().execute(async (trx) => {
       const trxEditorRequestRepo = this.editorRequestRepo.withTransaction(trx);
@@ -199,7 +228,13 @@ export class StudentService {
     });
   }
 
+  // =========================================================================
+  // СДАЧА И ПРОСМОТР БИЛЕТОВ (ЭТАПЫ TICKETING И FINISHED)
+  // =========================================================================
 
+  /**
+   * Возвращает все билеты, назначенные студенту по его зарегистрированным предметам.
+   */
   async getTicketsForStudent(telegramId: number): Promise<TicketWithSubjectView[]> {
     const currentStage = await stageManager.getCurrentStageFast();
     if (currentStage !== ProcessStage.TICKETING && currentStage !== ProcessStage.FINISHED) {
@@ -208,24 +243,24 @@ export class StudentService {
 
     const user = await this.userRepo.findById(telegramId);
     if (!user) {
-      throw new Error("Пользователь не найден.");
+      throw new Error('Пользователь не найден.');
     }
+
     if (user.student !== 1) {
-      throw new Error("Пользователь не являеться студентом.");
+      throw new Error('Пользователь не является студентом.');
     }
 
     const registrations = await this.registrationRepo.findByUserId(telegramId);
-    const registeredSubjectIds = registrations.map(reg => reg.subjectId);
+    const registeredSubjectIds = registrations.map((reg) => reg.subjectId);
+    if (registeredSubjectIds.length === 0) return [];
 
-    if (registeredSubjectIds.length === 0) {
-      return [];
-    }
-
-    const ticketViews = await this.ticketViewRepo.findByStudentIdAndSubjectIds(telegramId, registeredSubjectIds);
-
-    return ticketViews as TicketWithSubjectView[];
+    return this.ticketViewRepo.findByStudentIdAndSubjectIds(telegramId, registeredSubjectIds);
   }
 
+  /**
+   * Фиксирует отправку файла решения студентом по `ticketId`: увеличивает версию файла,
+   * переводит статус билета в `ON_CHECK` и окрашивает ячейку в Google Sheets в серый цвет.
+   */
   async submitTicketById(
     studentTelegramId: number,
     ticketId: number,
@@ -234,12 +269,12 @@ export class StudentService {
   ): Promise<{ version: number; subjectName: string; ticketNumber: number }> {
     const currentStage = await stageManager.getCurrentStageFast();
     if (currentStage !== ProcessStage.TICKETING && currentStage !== ProcessStage.FINISHED) {
-      throw new Error(`Отправка билета возможна только на этапе подготовки.`);
+      throw new Error('Отправка билета возможна только на этапе подготовки.');
     }
 
     const ticket = await this.ticketRepo.findById(ticketId);
     if (!ticket || ticket.studentId !== studentTelegramId) {
-      throw new Error(`Билет не найден или не назначен вам.`);
+      throw new Error('Билет не найден или не назначен вам.');
     }
 
     const subject = await this.subjectRepo.findById(ticket.subjectId);
@@ -254,11 +289,9 @@ export class StudentService {
     });
 
     if (subject) {
-      await this.ticketSheetRepo.updateTicketCellColor(
-        subject.subjectName,
-        ticket.ticketNumber,
-        TicketStatus.ON_CHECK
-      ).catch(err => console.error('Ошибка покраски ячейки в Sheets:', err));
+      await this.ticketSheetRepo
+        .updateTicketCellColor(subject.subjectName, ticket.ticketNumber, TicketStatus.ON_CHECK)
+        .catch((err) => console.error('Ошибка покраски ячейки в Sheets:', err));
     }
 
     return {
@@ -268,6 +301,10 @@ export class StudentService {
     };
   }
 
+  /**
+   * Откатывает статус билета обратно в `IN_PROGRESS` при сбое скачивания
+   * документа с серверов Telegram.
+   */
   async revertTicketStatus(ticketId: number): Promise<void> {
     await this.ticketRepo.update(ticketId, {
       status: TicketStatus.IN_PROGRESS,

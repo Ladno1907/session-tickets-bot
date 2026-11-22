@@ -3,9 +3,21 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { join, extname } from 'node:path';
 import { config } from '../config.js';
 
+/**
+ * Локальное файловое хранилище решений билетов (`./data/tickets/`).
+ * Отвечает за скачивание документов с серверов Telegram Bot API с версионированием
+ * (`ticket_{ticketId}_v{version}{ext}`) и формирование путей к файлам на диске.
+ */
 export class TicketFileStorage {
   private readonly baseDir = join(process.cwd(), 'data', 'tickets');
 
+  // =========================================================================
+  // СКАЧИВАНИЕ И СОХРАНЕНИЕ ДОКУМЕНТОВ
+  // =========================================================================
+
+  /**
+   * Скачивает документ из Telegram по `fileId` и сохраняет его на диск с указанным номером версии.
+   */
   public async saveTelegramDocument(
     api: Api,
     fileId: string,
@@ -20,12 +32,10 @@ export class TicketFileStorage {
     }
 
     const extension = extname(file.file_path) || '.bin';
-    const fileName = `ticket_${ticketId}_v${version}${extension}`;
-    const filePath = join(this.baseDir, fileName);
+    const filePath = this.getFilePath(ticketId, version, extension);
 
     const token = config.botToken.trim();
-    
-    const url = `https://api.telegram.org/file/bot${token}/${file.file_path}`;
+    const url = `https://telegram.org{token}/${file.file_path}`;
 
     const response = await fetch(url);
     if (!response.ok) {
@@ -38,6 +48,13 @@ export class TicketFileStorage {
     return { filePath, extension };
   }
 
+  // =========================================================================
+  // ПОЛУЧЕНИЕ ПУТЕЙ К ФАЙЛАМ
+  // =========================================================================
+
+  /**
+   * Возвращает абсолютный путь к сохранённому файлу решения по ID билета, версии и расширению.
+   */
   public getFilePath(ticketId: number, version: number, extension: string): string {
     return join(this.baseDir, `ticket_${ticketId}_v${version}${extension}`);
   }

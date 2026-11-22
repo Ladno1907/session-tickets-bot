@@ -9,7 +9,11 @@ const dialect = new SqliteDialect({
   database: sqlite,
 });
 
+/**
+ * Глобальный экземпляр query-builder Kysely с автоматическим маппингом `snake_case <-> camelCase`.
+ */
 export const db = new Kysely<DatabaseSchema>({
   dialect,
-  plugins: [new CamelCasePlugin()]
+  plugins: [new CamelCasePlugin()],
 });
+

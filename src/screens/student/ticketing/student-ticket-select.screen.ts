@@ -7,13 +7,16 @@ import { StudentTicketingScreen } from './student-ticketing.screen.js';
 import { StudentTicketSubmitScreen } from './student-ticket-submit.screen.js';
 import { paginateItems, appendPaginationButtons } from '../../pagination.js';
 
+/**
+ * Экран выбора билета для отправки решения (отображает только несданные билеты и билеты на доработке).
+ */
 export class StudentTicketSelectScreen implements BaseScreen {
   readonly id = 'student_ticket_select';
 
   async render(ctx: MyContext, notice?: string): Promise<RenderResult> {
     const tickets = await studentService.getTicketsForStudent(ctx.from!.id);
     const sendable = tickets.filter(
-      t => !t.status || t.status === TicketStatus.IN_PROGRESS || t.status === TicketStatus.ON_REWORK
+      (t) => !t.status || t.status === TicketStatus.IN_PROGRESS || t.status === TicketStatus.ON_REWORK
     );
 
     let text = `📤 *Выберите билет для отправки решения:*\n` +
@@ -29,7 +32,7 @@ export class StudentTicketSelectScreen implements BaseScreen {
         sendable,
         ctx,
         'st_sel_page',
-        t => t.subjectName,
+        (t) => t.subjectName,
         16,
         3000
       );

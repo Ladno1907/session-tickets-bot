@@ -8,6 +8,11 @@ import { ticketRepository } from '../database/repositories/TicketRepo.js';
 import { ticketViewRepository } from '../database/repositories/TicketViewRepo.js';
 import { ticketSheetRepository } from '../database/sheetRepositories/TicketSheetRepository.js';
 
+/**
+ * Сервис бизнес-логики Редактора (проверяющего).
+ * Обеспечивает просмотр закреплённых билетов, проверку решений, отправку на доработку,
+ * принятие билетов и замену файлов с цветовой синхронизацией в Google Sheets.
+ */
 export class EditorService {
   constructor(
     private readonly userRepo = userRepository,
@@ -17,6 +22,14 @@ export class EditorService {
     private readonly stageMgr = stageManager,
   ) {}
 
+  // =========================================================================
+  // ПРОСМОТР ОЧЕРЕДИ И КАРТОЧКИ БИЛЕТА
+  // =========================================================================
+
+  /**
+   * Возвращает все билеты, закреплённые за редактором по его предметам
+   * (на этапах `TICKETING` и `FINISHED`).
+   */
   async getTicketsForEditor(editorTelegramId: number): Promise<TicketWithSubjectView[]> {
     const currentStage = await this.stageMgr.getCurrentStageFast();
     if (currentStage !== ProcessStage.TICKETING && currentStage !== ProcessStage.FINISHED) {
@@ -25,25 +38,29 @@ export class EditorService {
 
     const user = await this.userRepo.findById(editorTelegramId);
     if (!user || user.editor !== 1) {
-      throw new Error("Пользователь не является редактором.");
+      throw new Error('Пользователь не является редактором.');
     }
 
     const edits = await this.editorRepo.findByUserId(editorTelegramId);
-    const editedSubjectIds = edits.map(edit => edit.subjectId);
+    const editedSubjectIds = edits.map((edit) => edit.subjectId);
     if (editedSubjectIds.length === 0) return [];
 
     return this.ticketViewRepo.findByEditorIdAndSubjectIds(editorTelegramId, editedSubjectIds);
   }
 
+  /**
+   * Возвращает детальную информацию о билете для проверки
+   * (доступно только для статусов `ON_CHECK` и `APPROVED`).
+   */
   async getTicket(editorTelegramId: number, ticketId: number): Promise<TicketWithSubjectView | null> {
     const currentStage = await this.stageMgr.getCurrentStageFast();
     if (currentStage !== ProcessStage.TICKETING && currentStage !== ProcessStage.FINISHED) {
-      throw new Error(`Получение билета недоступно на текущем этапе.`);
+      throw new Error('Получение билета недоступно на текущем этапе.');
     }
 
     const user = await this.userRepo.findById(editorTelegramId);
     if (!user || user.editor !== 1) {
-      throw new Error("Пользователь не является редактором.");
+      throw new Error('Пользователь не является редактором.');
     }
 
     const ticketToUpdate = await this.ticketRepo.findByTicketIdAndEditorId(ticketId, editorTelegramId);
@@ -55,13 +72,47 @@ export class EditorService {
       throw new Error(`Билет ${ticketId} не находится на проверке и не одобрен.`);
     }
 
-    return await this.ticketViewRepo.findByTicketId(ticketId);
+    return this.ticketViewRepo.findByTicketId(ticketId);
   }
 
-  async sendTicketForRework(editorTelegramId: number, ticketId: number, comment?: string): Promise<TicketWithSubjectView> {
+  // =========================================================================
+  // МОДЕРАЦИЯ РЕШЕНИЙ (ПРИНЯТИЕ / ДОРАБОТКА / ЗАМЕНА ФАЙЛА)
+  // =========================================================================
+
+  /**
+   * Одобряет решение билета (`APPROVED`) и окрашивает ячейку студента
+   * в Google Sheets в зелёный цвет.
+   */
+  async acceptTicket(editorTelegramId: number, ticketId: number): Promise<TicketWithSubjectView> {
     const ticketView = await this.getTicket(editorTelegramId, ticketId);
     if (!ticketView || ticketView.status !== TicketStatus.ON_CHECK) {
-      throw new Error(`Билет не находится на проверке.`);
+      throw new Error('Билет не находится на проверке.');
+    }
+
+    await this.ticketRepo.update(ticketId, {
+      status: TicketStatus.APPROVED,
+      updatedAt: new Date().toISOString(),
+    });
+
+    await ticketSheetRepository
+      .updateTicketCellColor(ticketView.subjectName, ticketView.ticketNumber, TicketStatus.APPROVED)
+      .catch((err) => console.error('Ошибка покраски ячейки в Sheets:', err));
+
+    return ticketView;
+  }
+
+  /**
+   * Возвращает билет студенту на доработку (`ON_REWORK`) с комментарием редактора
+   * и окрашивает ячейку студента в Google Sheets в жёлтый цвет.
+   */
+  async sendTicketForRework(
+    editorTelegramId: number,
+    ticketId: number,
+    comment?: string
+  ): Promise<TicketWithSubjectView> {
+    const ticketView = await this.getTicket(editorTelegramId, ticketId);
+    if (!ticketView || ticketView.status !== TicketStatus.ON_CHECK) {
+      throw new Error('Билет не находится на проверке.');
     }
 
     await this.ticketRepo.update(ticketId, {
@@ -72,33 +123,19 @@ export class EditorService {
 
     await ticketSheetRepository
       .updateTicketCellColor(ticketView.subjectName, ticketView.ticketNumber, TicketStatus.ON_REWORK)
-      .catch(err => console.error('Ошибка покраски ячейки в Sheets:', err));
+      .catch((err) => console.error('Ошибка покраски ячейки в Sheets:', err));
 
     return ticketView;
   }
 
-  async acceptTicket(editorTelegramId: number, ticketId: number): Promise<TicketWithSubjectView> {
-    const ticketView = await this.getTicket(editorTelegramId, ticketId);
-    if (!ticketView || ticketView.status !== TicketStatus.ON_CHECK) {
-      throw new Error(`Билет не находится на проверке.`);
-    }
-
-    await this.ticketRepo.update(ticketId, {
-      status: TicketStatus.APPROVED,
-      updatedAt: new Date().toISOString(),
-    });
-
-    await ticketSheetRepository
-      .updateTicketCellColor(ticketView.subjectName, ticketView.ticketNumber, TicketStatus.APPROVED)
-      .catch(err => console.error('Ошибка покраски ячейки в Sheets:', err));
-
-    return ticketView;
-  }
-
+  /**
+   * Инкрементирует версию файла билета и обновляет его расширение
+   * при замене документа редактором.
+   */
   async replaceTicket(editorTelegramId: number, ticketId: number, fileExtension: string): Promise<number> {
     const ticketView = await this.getTicket(editorTelegramId, ticketId);
     if (!ticketView) {
-      throw new Error(`Билет не найден или недоступен.`);
+      throw new Error('Билет не найден или недоступен.');
     }
 
     const newFileVersion = (ticketView.fileVersion ?? 0) + 1;

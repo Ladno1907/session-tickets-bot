@@ -6,20 +6,25 @@ import { AdminRegistrationScreen } from './admin-registration.screen.js';
 import { AdminRegSubjectEditorsScreen } from './admin-reg-subject-editors.screen.js';
 import { AdminRegLoadSubjectsScreen } from './admin-reg-load-subjects.screen.js';
 import { AdminRegDeleteSubjectScreen } from './admin-reg-delete-subject.screen.js';
+import { escapeMarkdown } from '../../../utils/format.js';
 
+/**
+ * Промежуточный экран выбора предмета на этапе регистрации
+ * (для просмотра записавшихся студентов, настройки редакторов или управления предметами).
+ */
 export class AdminRegSelectSubjectScreen implements BaseScreen {
   readonly id = 'admin_reg_select_subject';
 
   async render(ctx: MyContext, notice?: string): Promise<RenderResult> {
     if (!ctx.from) {
-      throw new Error("Критическая ошибка: не удалось определить пользователя в контексте grammY.");
+      throw new Error('Критическая ошибка: не удалось определить пользователя в контексте grammY.');
     }
 
     const subjects = await chiefEditorService.getAllSubjects(ctx.from.id);
     const action = ctx.session.meta?.subjectAction;
 
     let title = '📚 *Панель Администратора: Выбор Предмета*\n\n';
-    
+
     if (action === 'view_students') {
       title += 'Выберите предмет для просмотра списка записавшихся студентов:';
     } else if (action === 'manage_editors') {
@@ -33,7 +38,7 @@ export class AdminRegSelectSubjectScreen implements BaseScreen {
     }
 
     const keyboard = new InlineKeyboard();
-    
+
     if (action === 'manage_subjects') {
       keyboard.text('📥 Загрузить новый предмет', 'sub_op:load').row();
       keyboard.text('🗑️ Удалить предмет из системы', 'sub_op:delete').row();
@@ -47,7 +52,7 @@ export class AdminRegSelectSubjectScreen implements BaseScreen {
       if (action === 'manage_subjects') {
         title += '\n\n*Текущие предметы в системе:*';
       }
-      subjects.forEach(sub => {
+      subjects.forEach((sub) => {
         keyboard.text(`📘 ${sub.subjectName}`, `select_sub:${sub.subjectId}`).row();
       });
     }
@@ -57,7 +62,7 @@ export class AdminRegSelectSubjectScreen implements BaseScreen {
     return {
       displayType: 'main_menu',
       text: title,
-      reply_markup: keyboard
+      reply_markup: keyboard,
     };
   }
 
@@ -82,7 +87,7 @@ export class AdminRegSelectSubjectScreen implements BaseScreen {
 
     if (data.startsWith('select_sub:')) {
       if (!ctx.from) {
-        throw new Error("Критическая ошибка: не удалось определить пользователя в контексте grammY.");
+        throw new Error('Критическая ошибка: не удалось определить пользователя в контексте grammY.');
       }
 
       const subjectId = parseInt(data.split(':')[1], 10);
@@ -92,15 +97,15 @@ export class AdminRegSelectSubjectScreen implements BaseScreen {
       if (action === 'view_students') {
         const students = await chiefEditorService.getUsersOnSubject(ctx.from.id, subjectId);
         let text = `📚 *Студенты, выбравшие этот предмет*:\n\n`;
-        
+
         if (students.length === 0) {
           text += `❌ На этот предмет пока никто не записался.`;
         } else {
           students.forEach((s, i) => {
-            text += `${i + 1}. ${s.userName} (ID: ${s.telegramId})\n`;
-          }); 
+            text += `${i + 1}. ${escapeMarkdown(s.userName)} (ID: ${s.telegramId})\n`;
+          });
         }
-        
+
         delete ctx.session.meta.subjectAction;
         delete ctx.session.meta.targetSubjectId;
         ctx.session.meta.notice = text;
@@ -110,12 +115,13 @@ export class AdminRegSelectSubjectScreen implements BaseScreen {
       if (action === 'manage_editors') {
         return new AdminRegSubjectEditorsScreen();
       }
-      
+
       if (action === 'manage_subjects') {
-        return this; 
+        return this;
       }
     }
 
     return null;
   }
 }
+

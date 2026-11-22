@@ -1,8 +1,9 @@
-import { db } from '../database/client.js';
 import { Bot } from 'grammy';
+import { db } from '../database/client.js';
 import { bot } from '../bot.js';
 import { MyContext } from '../types/context.js';
 import { ProcessConfig, ProcessStage } from '../types/entities.js';
+import { ParsedSubjectRow } from '../types/sheets.js';
 import { config } from '../config.js';
 
 import { stageManager } from '../managers/StageManager.js';
@@ -15,6 +16,11 @@ import { editorRequestRepository } from '../database/repositories/EditorRequestR
 import { ticketSheetRepository } from '../database/sheetRepositories/TicketSheetRepository.js';
 import { registrationRepository } from '../database/repositories/RegistrationRepo.js';
 
+/**
+ * Сервис бизнес-логики Главного Редактора (Администратора сессии).
+ * Управляет дедлайнами, переключением этапов, составом предметов, назначением редакторов
+ * и двусторонней синхронизацией ведомостей с Google Sheets.
+ */
 export class ChiefEditorService {
   constructor(
     private readonly userRepo = userRepository,
@@ -27,14 +33,52 @@ export class ChiefEditorService {
     private readonly registrationRepo = registrationRepository,
   ) {}
 
+  // =========================================================================
+  // ПРОВЕРКА ПРАВ И СИНХРОНИЗАЦИЯ АДМИНИСТРАТОРОВ
+  // =========================================================================
+
+  /**
+   * Проверяет, входит ли Telegram ID в список главных редакторов из конфигурации.
+   */
   public isAdmin(telegramId: number): boolean {
     return config.chiefEditorIds.includes(telegramId);
   }
 
-  async getDeadlines(chiefEditorTelegramId: number): Promise<{ registrationEnd?: string; distributionEnd?: string; ticketingEnd?: string } | null> {
-    if (!this.isAdmin(chiefEditorTelegramId)) {
-      throw new Error("Доступ запрещен. Пользователь не является главным редактором.");
+  /**
+   * Синхронизирует флаг `chiefEditor` в таблице `users` согласно `CHIEF_EDITOR_IDS` из `.env`.
+   */
+  async syncChiefEditors(configIds: number[]): Promise<void> {
+    await db.transaction().execute(async (trx) => {
+      const trxUserRepo = this.userRepo.withTransaction(trx);
+
+      await trxUserRepo.updateAll({ chiefEditor: 1 }, { chiefEditor: 0 });
+
+      if (configIds.length > 0) {
+        await trxUserRepo.updateByIds(configIds, { chiefEditor: 1 });
+      }
+    });
+  }
+
+  /**
+   * Выбрасывает исключение, если пользователь не обладает правами главного редактора.
+   */
+  private assertAdmin(telegramId: number): void {
+    if (!this.isAdmin(telegramId)) {
+      throw new Error('Доступ запрещен. Пользователь не является главным редактором.');
     }
+  }
+
+  // =========================================================================
+  // УПРАВЛЕНИЕ ДЕДЛАЙНАМИ И ЭТАПАМИ ПРОЦЕССА
+  // =========================================================================
+
+  /**
+   * Возвращает текущие установленные дедлайны этапов из глобальной конфигурации.
+   */
+  async getDeadlines(
+    chiefEditorTelegramId: number
+  ): Promise<{ registrationEnd?: string; distributionEnd?: string; ticketingEnd?: string } | null> {
+    this.assertAdmin(chiefEditorTelegramId);
 
     const cfg = await this.processConfigRepo.findGlobalConfig();
     if (!cfg) return null;
@@ -46,10 +90,14 @@ export class ChiefEditorService {
     };
   }
 
-  async setDeadlines(chiefEditorTelegramId: number, deadlines: Partial<Pick<ProcessConfig, 'registrationEnd' | 'distributionEnd' | 'ticketingEnd'>>): Promise<void> {
-    if (!this.isAdmin(chiefEditorTelegramId)) {
-      throw new Error("Доступ запрещен. Пользователь не является главным редактором.");
-    }
+  /**
+   * Устанавливает или обновляет дедлайны этапов (доступно только на стадии `PREPARATION`).
+   */
+  async setDeadlines(
+    chiefEditorTelegramId: number,
+    deadlines: Partial<Pick<ProcessConfig, 'registrationEnd' | 'distributionEnd' | 'ticketingEnd'>>
+  ): Promise<void> {
+    this.assertAdmin(chiefEditorTelegramId);
 
     const currentStage = await stageManager.getCurrentStageFast();
     if (currentStage !== ProcessStage.PREPARATION) {
@@ -66,130 +114,22 @@ export class ChiefEditorService {
     const updatedConfig: Partial<ProcessConfig> = {
       registrationEnd: deadlines.registrationEnd ?? currentConfig.registrationEnd,
       distributionEnd: deadlines.distributionEnd ?? currentConfig.distributionEnd,
-      ticketingEnd: deadlines.ticketingEnd ?? currentConfig.ticketingEnd
+      ticketingEnd: deadlines.ticketingEnd ?? currentConfig.ticketingEnd,
     };
 
     await this.processConfigRepo.update(updatedConfig);
   }
 
-  async getPreparationStats(chiefEditorTelegramId: number): Promise<{ subjectId: number; name: string; ticketsCount: number }[]> {
-    if (!this.isAdmin(chiefEditorTelegramId)) {
-      throw new Error("Доступ запрещен. Пользователь не является главным редактором.");
-    }
-
-    return await db.transaction().execute(async (trx) => {
-      const txSubjectRepo = this.subjectRepo.withTransaction(trx);
-      const txTicketRepo = this.ticketRepo.withTransaction(trx);
-
-      const allSubjects = await txSubjectRepo.findAll();
-      const ticketCounts = await txTicketRepo.countGroupBySubject();
-
-      const countsMap = new Map(ticketCounts.map(item => [item.subjectId, item.count]));
-
-      return allSubjects.map(subject => ({
-        subjectId: subject.subjectId,
-        name: subject.subjectName,
-        ticketsCount: countsMap.get(subject.subjectId) || 0,
-      }));
-    });
-  }
-
-  async getRegistrationStats(chiefEditorTelegramId: number): Promise<{ totalStudents: number; totalEditors: number }> {
-    if (!this.isAdmin(chiefEditorTelegramId)) {
-      throw new Error("Доступ запрещен. Пользователь не является главным редактором.");
-    }
-
-    const totalStudents = await this.userRepo.countActiveStudents();
-    const totalEditors = await this.userRepo.countActiveEditors();
-
-    return {
-      totalStudents,
-      totalEditors,
-    };
-  }
-
-  async loadSubjectsAndTicketsFromSheets(chiefEditorTelegramId: number, subjectNames: string[]): Promise<void> {
-    if (!this.isAdmin(chiefEditorTelegramId)) {
-      throw new Error("Доступ запрещен. Пользователь не является главным редактором.");
-    }
-
-    const downloadedData: Record<string, any[]> = {};
-
-    for (const name of subjectNames) {
-      const sheetRows = await this.ticketSheetRepo.getSubjectData(name);
-      downloadedData[name] = sheetRows;
-    }
-
-    await db.transaction().execute(async (trx) => {
-      const txSubjectRepo = this.subjectRepo.withTransaction(trx);
-      const txTicketRepo = this.ticketRepo.withTransaction(trx);
-
-      for (const name of subjectNames) {
-        const sheetRows = downloadedData[name];
-
-        let subject = await txSubjectRepo.findByName(name);
-        if (!subject) {
-          await txSubjectRepo.insert({ subjectName: name });
-          subject = await txSubjectRepo.findByName(name);
-        }
-
-        const subjectId = subject!.subjectId;
-
-        const maxTicketNumberInSheet = sheetRows.length > 0 
-          ? Math.max(...sheetRows.map(r => r.ticketNumber)) 
-          : 0;
-
-        await txTicketRepo.removeTicketsExceedingNumber(subjectId, maxTicketNumberInSheet);
-
-        const nowIsoString = new Date().toISOString();
-
-        for (const row of sheetRows) {
-          const existingTicket = await txTicketRepo.findBySubjectAndNumber(subjectId, row.ticketNumber);
-
-          if (!existingTicket) {
-            await txTicketRepo.insert({
-              subjectId: subjectId,
-              ticketNumber: row.ticketNumber,
-              question: row.question,
-              updatedAt: nowIsoString,
-            });
-          } else {
-            if (existingTicket.question !== row.question) {
-              await txTicketRepo.update(existingTicket.ticketId, {
-                question: row.question,
-                updatedAt: nowIsoString,
-              });
-            }
-          }
-        }
-      }
-    });
-  }
-
-  async deleteSubjectByIdWithAllData(chiefEditorTelegramId: number, subjectId: number): Promise<void> {
-    if (!this.isAdmin(chiefEditorTelegramId)) {
-      throw new Error("Доступ запрещен. Пользователь не является главным редактором.");
-    }
-
-    const subject = await this.subjectRepo.findById(subjectId);
-    if (!subject) {
-      throw new Error(`Предмет с ID ${subjectId} не найден в базе данных.`);
-    }
-
-    await db.transaction().execute(async (trx) => {
-      const txSubjectRepo = this.subjectRepo.withTransaction(trx);
-      await txSubjectRepo.removeSubjectCompletely(subjectId);
-    });
-  }
-
-  async startRegistrationStage(chiefEditorTelegramId: number, bot: Bot<MyContext>): Promise<void> {
-    if (!this.isAdmin(chiefEditorTelegramId)) {
-      throw new Error("Доступ запрещен. Пользователь не является главным редактором.");
-    }
+  /**
+   * Переводит систему из подготовительного этапа (`PREPARATION`) в этап регистрации (`REGISTRATION`),
+   * предварительно проверяя наличие всех трёх обязательных дедлайнов.
+   */
+  async startRegistrationStage(chiefEditorTelegramId: number, botInstance: Bot<MyContext>): Promise<void> {
+    this.assertAdmin(chiefEditorTelegramId);
 
     const currentConfig = await this.processConfigRepo.findGlobalConfig();
     if (!currentConfig) {
-      throw new Error("Конфигурация процесса не найдена.");
+      throw new Error('Конфигурация процесса не найдена.');
     }
 
     if (currentConfig.currentStage !== ProcessStage.PREPARATION) {
@@ -202,242 +142,26 @@ export class ChiefEditorService {
       'ticketingEnd',
     ];
 
-    const missingDeadlines = requiredDeadlines.filter(dl => !currentConfig[dl]);
-
+    const missingDeadlines = requiredDeadlines.filter((dl) => !currentConfig[dl]);
     if (missingDeadlines.length > 0) {
       throw new Error(`Невозможно запустить этап регистрации. Не установлены следующие дедлайны: ${missingDeadlines.join(', ')}.`);
     }
 
     await stageManager.executeTransitionEffects(
-      ProcessStage.PREPARATION, 
-      ProcessStage.REGISTRATION, 
-      bot
+      ProcessStage.PREPARATION,
+      ProcessStage.REGISTRATION,
+      botInstance
     );
 
     await this.processConfigRepo.update({ currentStage: ProcessStage.REGISTRATION });
   }
 
-  async syncChiefEditors(configIds: number[]): Promise<void> {
-    await db.transaction().execute(async (trx) => {
-      const trxUserRepo = this.userRepo.withTransaction(trx);
-
-      await trxUserRepo.updateAll({ chiefEditor: 1 }, { chiefEditor: 0 });
-
-      if (configIds.length > 0) {
-        await trxUserRepo.updateByIds(configIds, { chiefEditor: 1 });
-      }
-    });
-  }
-
-  async getAllRegisteredUsers(chiefEditorTelegramId: number): Promise<{ telegramId: number; name: string }[]> {
-    if (!this.isAdmin(chiefEditorTelegramId)) {
-      throw new Error("Доступ запрещен. Пользователь не является главным редактором.");
-    }
-
-    const currentConfig = await this.processConfigRepo.findGlobalConfig();
-    if (currentConfig?.currentStage === ProcessStage.PREPARATION) {
-      throw new Error(`Получить список пользователей невозможно на этапе '${ProcessStage.PREPARATION}'`);
-    }
-
-    const rows = await this.userRepo.findAll();
-    return rows.map(r => ({ telegramId: r.telegramId, name: r.userName }));
-  }
-
-  async getAllSubjects(chiefEditorTelegramId: number): Promise<{ subjectId: number; subjectName: string }[]> {
-    if (!this.isAdmin(chiefEditorTelegramId)) {
-      throw new Error("Доступ запрещен. Пользователь не является главным редактором.");
-    }
-
-    return await this.subjectRepo.findAll();
-  }
-
-  async getUsersOnSubject(chiefEditorTelegramId: number, subjectId: number): Promise<{ telegramId: number; userName: string }[]> {
-    if (!this.isAdmin(chiefEditorTelegramId)) {
-      throw new Error("Доступ запрещен. Пользователь не является главным редактором.");
-    }
-
-    const currentConfig = await this.processConfigRepo.findGlobalConfig();
-    if (currentConfig?.currentStage === ProcessStage.PREPARATION) {
-      throw new Error(`Получить список пользователей невозможно на этапе '${ProcessStage.PREPARATION}'`);
-    }
-
-    const subject = await this.subjectRepo.findById(subjectId);
-    if (!subject) {
-      throw new Error(`Предмет с ID ${subjectId} не существует.`);
-    }
-    return await this.registrationRepo.findUsersBySubjectId(subjectId);
-  } 
-
-  async getEditorsForSubject(chiefEditorTelegramId: number, subjectId: number): Promise<{ telegramId: number; name: string }[]> {
-    if (!this.isAdmin(chiefEditorTelegramId)) {
-      throw new Error("Доступ запрещен. Пользователь не является главным редактором.");
-    }
-
-    const currentStage = await stageManager.getCurrentStageFast();
-    if (currentStage === ProcessStage.PREPARATION) {
-      throw new Error(`Действие недоступно на этапе '${ProcessStage.PREPARATION}'.`);
-    }
-
-    const subject = await this.subjectRepo.findById(subjectId);
-    if (!subject) {
-      throw new Error(`Предмет с ID ${subjectId} не найден.`);
-    }
-
-    const editorRecords = await this.editorRepo.findBySubjectId(subjectId);
-    const editorIds = editorRecords.map(record => record.telegramId);
-
-    if (editorIds.length === 0) {
-      return [];
-    }
-
-    const users = await this.userRepo.findByIds(editorIds);
-
-    return users.map(user => ({ telegramId: user.telegramId, name: user.userName }));
-  }
-
-  async getEditorRequestsForSubject(chiefEditorTelegramId: number, subjectId: number): Promise<{ telegramId: number; name: string }[]> {
-    if (!this.isAdmin(chiefEditorTelegramId)) {
-      throw new Error("Доступ запрещен. Пользователь не является главным редактором.");
-    }
-
-    const currentStage = await stageManager.getCurrentStageFast();
-    if (currentStage === ProcessStage.PREPARATION) {
-      throw new Error(`Действие недоступно на этапе '${ProcessStage.PREPARATION}'.`);
-    }
-
-    const subject = await this.subjectRepo.findById(subjectId);
-    if (!subject) {
-      throw new Error(`Предмет с ID ${subjectId} не найден.`);
-    }
-
-    const requestRecords = await this.editorRequestRepo.findBySubjectId(subjectId);
-    const requesterIds = requestRecords.map(record => record.telegramId);
-
-    if (requesterIds.length === 0) {
-      return [];
-    }
-
-    const users = await this.userRepo.findByIds(requesterIds);
-
-    return users.map(user => ({ telegramId: user.telegramId, name: user.userName }));
-  }
-
-  async getAllEditorsGroupedBySubject(chiefEditorTelegramId: number): Promise<{ subjectName: string; editors: string[] }[]> {
-    if (!this.isAdmin(chiefEditorTelegramId)) {
-      throw new Error("Доступ запрещен. Пользователь не является главным редактором.");
-    }
-
-    const currentStage = await stageManager.getCurrentStageFast();
-    if (currentStage === ProcessStage.PREPARATION) {
-      throw new Error(`Действие недоступно на этапе '${ProcessStage.PREPARATION}'.`);
-    }
-
-    const subjects = await this.subjectRepo.findAll();
-    const result: { subjectName: string; editors: string[] }[] = [];
-
-    for (const sub of subjects) {
-      const editors = await this.getEditorsForSubject(config.chiefEditorIds[0], sub.subjectId);
-      result.push({
-        subjectName: sub.subjectName,
-        editors: editors.map(e => e.name)
-      });
-    }
-    return result;
-  }
-
-  async getSubjectsDetailedStats(chiefEditorTelegramId: number): Promise<{ subjectId: number; name: string; studentsCount: number }[]> {
-    if (!this.isAdmin(chiefEditorTelegramId)) {
-      throw new Error("Доступ запрещен. Пользователь не является главным редактором.");
-    }
-
-    const currentConfig = await this.processConfigRepo.findGlobalConfig();
-    if (currentConfig?.currentStage === ProcessStage.PREPARATION) {
-      throw new Error(`Получить статистику по количеству студентов невозможно на этапе '${ProcessStage.PREPARATION}'`);
-    }
-
-    const allSubjects = await this.subjectRepo.findAll();
-    const counts = await this.registrationRepo.countStudentsGroupBySubject();
-    const countsMap = new Map(counts.map(c => [c.subjectId, c.count]));
-    return allSubjects.map(s => ({
-      subjectId: s.subjectId,
-      name: s.subjectName,
-      studentsCount: countsMap.get(s.subjectId) || 0
-    }));
-  }
-
-  async manageEditor(
-    chiefEditorTelegramId: number,
-    editorTelegramId: number,
-    subjectId: number,
-    action: 'assign' | 'unassign'
-  ): Promise<void> {
-    if (!this.isAdmin(chiefEditorTelegramId)) {
-      throw new Error("Доступ запрещен. Пользователь не является главным редактором.");
-    }
-
-    const currentStage = await stageManager.getCurrentStageFast();
-    if (currentStage === ProcessStage.PREPARATION) {
-      throw new Error(`Действие недоступно на этапе '${ProcessStage.PREPARATION}'.`);
-    }
-
-    const editorUser = await this.userRepo.findById(editorTelegramId);
-    if (!editorUser) {
-      throw new Error("Пользователь (редактор) не найден.");
-    }
-
-    const subject = await this.subjectRepo.findById(subjectId);
-    if (!subject) {
-      throw new Error(`Предмет с ID ${subjectId} не найден.`);
-    }
-    
-    if (action === 'assign') {
-      try {
-        await this.editorRepo.insert({ telegramId: editorTelegramId, subjectId });
-      } catch (error: any) {
-        if (!error.message.includes('UNIQUE constraint failed')) {
-          throw error;
-        }
-      }
-    } else if (action === 'unassign') {
-      await this.editorRepo.remove(editorTelegramId, subjectId);
-    } else {
-      throw new Error("Недопустимое действие. Используйте 'assign' или 'unassign'.");
-    }
-    
-    const remainingEdits = await this.editorRepo.findByUserId(editorTelegramId);
-    const newEditorFlag = remainingEdits.length > 0 ? 1 : 0;
-    await this.userRepo.update(editorTelegramId, { editor: newEditorFlag });
-
-    try {
-      if (action === 'assign') {
-        await bot.api.sendMessage(
-          editorTelegramId,
-          `👑 *Вы утверждены редактором!*\n\nАдминистратор назначил вас проверять билеты по предмету: *${subject.subjectName}*.\n` +
-          ` Когда начнется этап подготовки ответов, используйте команду /editor для доступа к панели проверки.`
-        );
-      } else {
-        await bot.api.sendMessage(
-          editorTelegramId,
-          `➖ *Изменение статуса редактора*\n\nВы были отстранены от проверки билетов по предмету: *${subject.subjectName}*.\n` +
-          ` Если у вас больше не осталось активных предметов для проверки, команда /editor станет недоступной.`
-        );
-      }
-    } catch (pushError) {
-      console.warn(`Не удалось доставить фоновое уведомление пользователю ${editorTelegramId}:`, pushError);
-    }
-    
-//    const currentEditors = await this.getEditorsForSubject(chiefEditorTelegramId, subjectId);
-//    const sheetAssignments = currentEditors.map((e, index) => ({
-//      ticketNumber: index + 1,
-//      editorFio: e.name
-//    }));
-//    await this.ticketSheetRepo.saveAssignedEditors(subject.subjectName, sheetAssignments);
-  } /* Дописать */
-
+  /**
+   * Досрочно завершает текущий этап (`REGISTRATION`, `DISTRIBUTION` или `TICKETING`),
+   * запускает триггеры перехода и фиксирует текущее время как конец завершённого этапа.
+   */
   async startNextStage(chiefEditorTelegramId: number): Promise<void> {
-    if (!this.isAdmin(chiefEditorTelegramId)) {
-      throw new Error("Доступ запрещен. Пользователь не является главным редактором.");
-    }
+    this.assertAdmin(chiefEditorTelegramId);
 
     const currentStage = await stageManager.getCurrentStageFast();
     if (currentStage === ProcessStage.PREPARATION) {
@@ -472,30 +196,375 @@ export class ChiefEditorService {
       default:
         throw new Error(`Неизвестный текущий этап для обновления дедлайна: ${currentStage}`);
     }
+
     await this.processConfigRepo.update(updatePatch);
   }
 
-  async exportLocalDataToSheet(chiefEditorTelegramId: number, subjectId: number): Promise<void> {
-    if (!this.isAdmin(chiefEditorTelegramId)) {
-      throw new Error("Доступ запрещен. Пользователь не является главным редактором.");
+  // =========================================================================
+  // УПРАВЛЕНИЕ ПРЕДМЕТАМИ И БИЛЕТАМИ
+  // =========================================================================
+
+  /**
+   * Возвращает список всех учебных предметов в системе.
+   */
+  async getAllSubjects(chiefEditorTelegramId: number): Promise<{ subjectId: number; subjectName: string }[]> {
+    this.assertAdmin(chiefEditorTelegramId);
+    return this.subjectRepo.findAll();
+  }
+
+  /**
+   * Загружает или обновляет список предметов и вопросы билетов из указанных листов Google Sheets.
+   */
+  async loadSubjectsAndTicketsFromSheets(chiefEditorTelegramId: number, subjectNames: string[]): Promise<void> {
+    this.assertAdmin(chiefEditorTelegramId);
+
+    const downloadedData: Record<string, ParsedSubjectRow[]> = {};
+    for (const name of subjectNames) {
+      downloadedData[name] = await this.ticketSheetRepo.getSubjectData(name);
+    }
+
+    await db.transaction().execute(async (trx) => {
+      const txSubjectRepo = this.subjectRepo.withTransaction(trx);
+      const txTicketRepo = this.ticketRepo.withTransaction(trx);
+
+      for (const name of subjectNames) {
+        const sheetRows = downloadedData[name];
+
+        let subject = await txSubjectRepo.findByName(name);
+        if (!subject) {
+          await txSubjectRepo.insert({ subjectName: name });
+          subject = await txSubjectRepo.findByName(name);
+        }
+
+        const subjectId = subject!.subjectId;
+        const maxTicketNumberInSheet = sheetRows.length > 0
+          ? Math.max(...sheetRows.map((r) => r.ticketNumber))
+          : 0;
+
+        await txTicketRepo.removeTicketsExceedingNumber(subjectId, maxTicketNumberInSheet);
+
+        const nowIsoString = new Date().toISOString();
+
+        for (const row of sheetRows) {
+          const existingTicket = await txTicketRepo.findBySubjectAndNumber(subjectId, row.ticketNumber);
+
+          if (!existingTicket) {
+            await txTicketRepo.insert({
+              subjectId,
+              ticketNumber: row.ticketNumber,
+              question: row.question,
+              updatedAt: nowIsoString,
+            });
+          } else if (existingTicket.question !== row.question) {
+            await txTicketRepo.update(existingTicket.ticketId, {
+              question: row.question,
+              updatedAt: nowIsoString,
+            });
+          }
+        }
+      }
+    });
+  }
+
+  /**
+   * Полностью удаляет предмет из БД вместе с билетами, регистрациями, редакторами и заявками.
+   */
+  async deleteSubjectByIdWithAllData(chiefEditorTelegramId: number, subjectId: number): Promise<void> {
+    this.assertAdmin(chiefEditorTelegramId);
+    
+    const subject = await this.subjectRepo.findById(subjectId);
+    if (!subject) {
+      throw new Error(`Предмет с ID ${subjectId} не найден в базе данных.`);
+    }
+
+    await db.transaction().execute(async (trx) => {
+      const txSubjectRepo = this.subjectRepo.withTransaction(trx);
+      await txSubjectRepo.removeSubjectCompletely(subjectId);
+    });
+  }
+
+  // =========================================================================
+  // УПРАВЛЕНИЕ РЕДАКТОРАМИ И ЗАЯВКАМИ
+  // =========================================================================
+
+  /**
+   * Возвращает список утверждённых редакторов по конкретному предмету.
+   */
+  async getEditorsForSubject(
+    chiefEditorTelegramId: number,
+    subjectId: number
+  ): Promise<{ telegramId: number; name: string }[]> {
+    this.assertAdmin(chiefEditorTelegramId);
+    
+    const currentStage = await stageManager.getCurrentStageFast();
+    if (currentStage === ProcessStage.PREPARATION) {
+      throw new Error(`Действие недоступно на этапе '${ProcessStage.PREPARATION}'.`);
     }
 
     const subject = await this.subjectRepo.findById(subjectId);
-    if (!subject) throw new Error("Предмет не найден.");
+    if (!subject) {
+      throw new Error(`Предмет с ID ${subjectId} не найден.`);
+    }
+
+    const editorRecords = await this.editorRepo.findBySubjectId(subjectId);
+    const editorIds = editorRecords.map((record) => record.telegramId);
+    
+    if (editorIds.length === 0) return [];
+
+    const users = await this.userRepo.findByIds(editorIds);
+    return users.map((user) => ({ telegramId: user.telegramId, name: user.userName }));
+  }
+
+  /**
+   * Возвращает список студентов, подавших заявку на редакторство по конкретному предмету.
+   */
+  async getEditorRequestsForSubject(
+    chiefEditorTelegramId: number,
+    subjectId: number
+  ): Promise<{ telegramId: number; name: string }[]> {
+    this.assertAdmin(chiefEditorTelegramId);
+    
+    const currentStage = await stageManager.getCurrentStageFast();
+    if (currentStage === ProcessStage.PREPARATION) {
+      throw new Error(`Действие недоступно на этапе '${ProcessStage.PREPARATION}'.`);
+    }
+
+    const subject = await this.subjectRepo.findById(subjectId);
+    if (!subject) {
+      throw new Error(`Предмет с ID ${subjectId} не найден.`);
+    }
+
+    const requestRecords = await this.editorRequestRepo.findBySubjectId(subjectId);
+    const requesterIds = requestRecords.map((record) => record.telegramId);
+    
+    if (requesterIds.length === 0) return [];
+
+    const users = await this.userRepo.findByIds(requesterIds);
+    return users.map((user) => ({ telegramId: user.telegramId, name: user.userName }));
+  }
+
+  /**
+   * Возвращает всех утверждённых редакторов, сгруппированных по предметам.
+   */
+  async getAllEditorsGroupedBySubject(
+    chiefEditorTelegramId: number
+  ): Promise<{ subjectName: string; editors: string[] }[]> {
+    this.assertAdmin(chiefEditorTelegramId);
+    
+    const currentStage = await stageManager.getCurrentStageFast();
+    if (currentStage === ProcessStage.PREPARATION) {
+      throw new Error(`Действие недоступно на этапе '${ProcessStage.PREPARATION}'.`);
+    }
+
+    const subjects = await this.subjectRepo.findAll();
+    const result: { subjectName: string; editors: string[] }[] = [];
+
+    for (const sub of subjects) {
+      const editors = await this.getEditorsForSubject(chiefEditorTelegramId, sub.subjectId);
+      result.push({
+        subjectName: sub.subjectName,
+        editors: editors.map((e) => e.name),
+      });
+    }
+
+    return result;
+  }
+
+  /**
+   * Назначает (assign) или отстраняет (unassign) пользователя от роли редактора предмета,
+   * обновляет глобальный флаг `users.editor` и отправляет личное уведомление в Telegram.
+   */
+  async manageEditor(
+    chiefEditorTelegramId: number,
+    editorTelegramId: number,
+    subjectId: number,
+    action: 'assign' | 'unassign'
+  ): Promise<void> {
+    this.assertAdmin(chiefEditorTelegramId);
+    
+    const currentStage = await stageManager.getCurrentStageFast();
+    if (currentStage === ProcessStage.PREPARATION) {
+      throw new Error(`Действие недоступно на этапе '${ProcessStage.PREPARATION}'.`);
+    }
+
+    const editorUser = await this.userRepo.findById(editorTelegramId);
+    if (!editorUser) {
+      throw new Error('Пользователь (редактор) не найден.');
+    }
+
+    const subject = await this.subjectRepo.findById(subjectId);
+    if (!subject) {
+      throw new Error(`Предмет с ID ${subjectId} не найден.`);
+    }
+
+    if (action === 'assign') {
+      try {
+        await this.editorRepo.insert({ telegramId: editorTelegramId, subjectId });
+      } catch (error: any) {
+        if (!error.message.includes('UNIQUE constraint failed')) {
+          throw error;
+        }
+      }
+    } else if (action === 'unassign') {
+      await this.editorRepo.remove(editorTelegramId, subjectId);
+    } else {
+      throw new Error("Недопустимое действие. Используйте 'assign' или 'unassign'.");
+    }
+
+    const remainingEdits = await this.editorRepo.findByUserId(editorTelegramId);
+    const newEditorFlag = remainingEdits.length > 0 ? 1 : 0;
+    await this.userRepo.update(editorTelegramId, { editor: newEditorFlag });
+
+    try {
+      if (action === 'assign') {
+        await bot.api.sendMessage(
+          editorTelegramId,
+          `👑 *Вы утверждены редактором!*\n\nАдминистратор назначил вас проверять билеты по предмету: *${subject.subjectName}*.\n` +
+          `Когда начнется этап подготовки ответов, используйте команду /editor для доступа к панели проверки.`,
+          { parse_mode: 'Markdown' }
+        );
+      } else {
+        await bot.api.sendMessage(
+          editorTelegramId,
+          `➖ *Изменение статуса редактора*\n\nВы были отстранены от проверки билетов по предмету: *${subject.subjectName}*.\n` +
+          `Если у вас больше не осталось активных предметов для проверки, команда /editor станет недоступной.`,
+          { parse_mode: 'Markdown' }
+        );
+      }
+    } catch (pushError) {
+      console.warn(`Не удалось доставить фоновое уведомление пользователю ${editorTelegramId}:`, pushError);
+    }
+  }
+
+  // =========================================================================
+  // СТАТИСТИКА И СПИСКИ УЧАСТНИКОВ
+  // =========================================================================
+
+  /**
+   * Возвращает сводку по загруженным предметам и количеству билетов в каждом из них.
+   */
+  async getPreparationStats(
+    chiefEditorTelegramId: number
+  ): Promise<{ subjectId: number; name: string; ticketsCount: number }[]> {
+    this.assertAdmin(chiefEditorTelegramId);
+    
+    return db.transaction().execute(async (trx) => {
+      const txSubjectRepo = this.subjectRepo.withTransaction(trx);
+      const txTicketRepo = this.ticketRepo.withTransaction(trx);
+
+      const allSubjects = await txSubjectRepo.findAll();
+      const ticketCounts = await txTicketRepo.countGroupBySubject();
+      const countsMap = new Map(ticketCounts.map((item) => [item.subjectId, item.count]));
+
+      return allSubjects.map((subject) => ({
+        subjectId: subject.subjectId,
+        name: subject.subjectName,
+        ticketsCount: countsMap.get(subject.subjectId) || 0,
+      }));
+    });
+  }
+
+  /**
+   * Возвращает общее число активных студентов и утверждённых редакторов.
+   */
+  async getRegistrationStats(
+    chiefEditorTelegramId: number
+  ): Promise<{ totalStudents: number; totalEditors: number }> {
+    this.assertAdmin(chiefEditorTelegramId);
+    
+    const totalStudents = await this.userRepo.countActiveStudents();
+    const totalEditors = await this.userRepo.countActiveEditors();
+    
+    return { totalStudents, totalEditors };
+  }
+
+  /**
+   * Возвращает количество записавшихся студентов в разрезе каждого предмета.
+   */
+  async getSubjectsDetailedStats(
+    chiefEditorTelegramId: number
+  ): Promise<{ subjectId: number; name: string; studentsCount: number }[]> {
+    this.assertAdmin(chiefEditorTelegramId);
+    
+    const currentConfig = await this.processConfigRepo.findGlobalConfig();
+    if (currentConfig?.currentStage === ProcessStage.PREPARATION) {
+      throw new Error(`Получить статистику по количеству студентов невозможно на этапе '${ProcessStage.PREPARATION}'`);
+    }
+
+    const allSubjects = await this.subjectRepo.findAll();
+    const counts = await this.registrationRepo.countStudentsGroupBySubject();
+    const countsMap = new Map(counts.map((c) => [c.subjectId, c.count]));
+
+    return allSubjects.map((s) => ({
+      subjectId: s.subjectId,
+      name: s.subjectName,
+      studentsCount: countsMap.get(s.subjectId) || 0,
+    }));
+  }
+
+  /**
+   * Возвращает полный список всех зарегистрированных в боте пользователей.
+   */
+  async getAllRegisteredUsers(
+    chiefEditorTelegramId: number
+  ): Promise<{ telegramId: number; name: string }[]> {
+    this.assertAdmin(chiefEditorTelegramId);
+    
+    const currentConfig = await this.processConfigRepo.findGlobalConfig();
+    if (currentConfig?.currentStage === ProcessStage.PREPARATION) {
+      throw new Error(`Получить список пользователей невозможно на этапе '${ProcessStage.PREPARATION}'`);
+    }
+
+    const rows = await this.userRepo.findAll();
+    return rows.map((r) => ({ telegramId: r.telegramId, name: r.userName }));
+  }
+
+  /**
+   * Возвращает список пользователей, записавшихся на конкретный предмет.
+   */
+  async getUsersOnSubject(
+    chiefEditorTelegramId: number,
+    subjectId: number
+  ): Promise<{ telegramId: number; userName: string }[]> {
+    this.assertAdmin(chiefEditorTelegramId);
+    
+    const currentConfig = await this.processConfigRepo.findGlobalConfig();
+    if (currentConfig?.currentStage === ProcessStage.PREPARATION) {
+      throw new Error(`Получить список пользователей невозможно на этапе '${ProcessStage.PREPARATION}'`);
+    }
+
+    const subject = await this.subjectRepo.findById(subjectId);
+    if (!subject) {
+      throw new Error(`Предмет с ID ${subjectId} не существует.`);
+    }
+
+    return this.registrationRepo.findUsersBySubjectId(subjectId);
+  }
+
+  // =========================================================================
+  // СИНХРОНИЗАЦИЯ ВЕДОМОСТЕЙ С GOOGLE SHEETS
+  // =========================================================================
+
+  /**
+   * Выгружает текущее распределение студентов и редакторов из SQLite в лист Google Sheets.
+   */
+  async exportLocalDataToSheet(chiefEditorTelegramId: number, subjectId: number): Promise<void> {
+    this.assertAdmin(chiefEditorTelegramId);
+    
+    const subject = await this.subjectRepo.findById(subjectId);
+    if (!subject) throw new Error('Предмет не найден.');
 
     const tickets = await this.ticketRepo.findBySubjectIdSorted(subjectId);
     if (tickets.length === 0) return;
 
     const studentAssignments: { ticketNumber: number; studentFio: string }[] = [];
+    const editorAssignments: { ticketNumber: number; editorFio: string }[] = [];
+
     for (const t of tickets) {
       if (t.studentId) {
         const u = await this.userRepo.findById(t.studentId);
         if (u) studentAssignments.push({ ticketNumber: t.ticketNumber, studentFio: u.userName });
       }
-    }
-
-    const editorAssignments: { ticketNumber: number; editorFio: string }[] = [];
-    for (const t of tickets) {
       if (t.editorId) {
         const u = await this.userRepo.findById(t.editorId);
         if (u) editorAssignments.push({ ticketNumber: t.ticketNumber, editorFio: u.userName });
@@ -506,23 +575,32 @@ export class ChiefEditorService {
     await this.ticketSheetRepo.saveAssignedEditors(subject.subjectName, editorAssignments);
   }
 
+  /**
+   * Импортирует вопросы, назначенных студентов и редакторов «как есть» из листа Google Sheets в SQLite.
+   */
   async importDataAsIsFromSheet(chiefEditorTelegramId: number, subjectId: number): Promise<void> {
-    if (!this.isAdmin(chiefEditorTelegramId)) throw new Error("Доступ запрещен.");
-
+    this.assertAdmin(chiefEditorTelegramId);
+    
     const subject = await this.subjectRepo.findById(subjectId);
-    if (!subject) throw new Error("Предмет не найден.");
+    if (!subject) throw new Error('Предмет не найден.');
 
     const sheetRows = await this.ticketSheetRepo.getSubjectData(subject.subjectName);
-
     const allUsers = await this.userRepo.findAll();
-    const nameToIdMap = new Map<string, number>(allUsers.map(u => [u.userName.toLowerCase().trim(), u.telegramId]));
+    
+    const nameToIdMap = new Map<string, number>(
+      allUsers.map((u) => [u.userName.toLowerCase().trim(), u.telegramId])
+    );
 
     await db.transaction().execute(async (trx) => {
       const txTicketRepo = this.ticketRepo.withTransaction(trx);
       const txRegRepo = this.registrationRepo.withTransaction(trx);
       const txEditorRepo = this.editorRepo.withTransaction(trx);
+      const txUserRepo = this.userRepo.withTransaction(trx);
 
-      const maxTicketNumber = sheetRows.length > 0 ? Math.max(...sheetRows.map(r => r.ticketNumber)) : 0;
+      const maxTicketNumber = sheetRows.length > 0
+        ? Math.max(...sheetRows.map((r) => r.ticketNumber))
+        : 0;
+
       await txTicketRepo.removeTicketsExceedingNumber(subjectId, maxTicketNumber);
 
       for (const row of sheetRows) {
@@ -533,9 +611,9 @@ export class ChiefEditorService {
 
         const patch = {
           question: row.question,
-          studentId: studentId !== null ? studentId : undefined,
-          editorId: editorId !== null ? editorId : undefined,
-          updatedAt: new Date().toISOString()
+          studentId: studentId ?? undefined,
+          editorId: editorId ?? undefined,
+          updatedAt: new Date().toISOString(),
         };
 
         if (existingTicket) {
@@ -546,34 +624,40 @@ export class ChiefEditorService {
 
         if (studentId) {
           try { await txRegRepo.insert({ telegramId: studentId, subjectId }); } catch {}
-          await trx.updateTable('users').set({ student: 1 }).where('telegramId', '=', studentId).execute();
+          await txUserRepo.update(studentId, { student: 1 });
         }
+
         if (editorId) {
           try { await txEditorRepo.insert({ telegramId: editorId, subjectId }); } catch {}
-          await trx.updateTable('users').set({ editor: 1 }).where('telegramId', '=', editorId).execute();
+          await txUserRepo.update(editorId, { editor: 1 });
         }
       }
     });
   }
 
+  /**
+   * Импортирует данные из Google Sheets и запускает перераспределение студентов «змейкой».
+   */
   async importWithStudentRedistribution(chiefEditorTelegramId: number, subjectId: number): Promise<void> {
-    if (!this.isAdmin(chiefEditorTelegramId)) throw new Error("Доступ запрещен.");
+    this.assertAdmin(chiefEditorTelegramId);
     
     await this.importDataAsIsFromSheet(chiefEditorTelegramId, subjectId);
-
+    
     const { distributionService } = await import('./DistributionService.js');
     await distributionService.distributeTicketsToStudents();
   }
 
+  /**
+   * Импортирует данные из Google Sheets и запускает пропорциональное перераспределение редакторов.
+   */
   async importWithEditorRedistribution(chiefEditorTelegramId: number, subjectId: number): Promise<void> {
-    if (!this.isAdmin(chiefEditorTelegramId)) throw new Error("Доступ запрещен.");
-
+    this.assertAdmin(chiefEditorTelegramId);
+    
     await this.importDataAsIsFromSheet(chiefEditorTelegramId, subjectId);
-
+    
     const { distributionService } = await import('./DistributionService.js');
     await distributionService.distributeTicketsToEditors();
   }
 }
 
 export const chiefEditorService = new ChiefEditorService();
-

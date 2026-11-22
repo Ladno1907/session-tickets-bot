@@ -4,17 +4,20 @@ import { MyContext } from '../../../types/context.js';
 import { studentService } from '../../../services/StudentService.js';
 import { StudentRegistrationScreen } from './student-registration.screen.js';
 
+/**
+ * Экран множественного выбора предметов (чекбоксы ✅/⬜) для подготовки билетов
+ * или подачи заявки в редакторы на этапе регистрации.
+ */
 export class StudentRegSubjectSelectionScreen implements BaseScreen {
   readonly id = 'student_reg_subject_selection';
 
   async render(ctx: MyContext, notice?: string): Promise<RenderResult> {
     if (!ctx.from) {
-      throw new Error("Пользователь не определен.");
+      throw new Error('Пользователь не определен.');
     }
 
     const type = ctx.session.meta?.selectionType as 'student' | 'editor';
     const selectedIds: number[] = ctx.session.meta?.selectedSubjectIds || [];
-
     const allSubjects = await studentService.getAllSubjects();
 
     let text = type === 'student'
@@ -30,10 +33,9 @@ export class StudentRegSubjectSelectionScreen implements BaseScreen {
     if (allSubjects.length === 0) {
       text += '\n\n❌ В системе пока нет доступных предметов. Обратитесь к администратору.';
     } else {
-      allSubjects.forEach(sub => {
+      allSubjects.forEach((sub) => {
         const isSelected = selectedIds.includes(sub.subjectId);
         const prefix = isSelected ? '✅ ' : '⬜ ';
-        
         keyboard.text(`${prefix}${sub.subjectName}`, `toggle_subject:${sub.subjectId}`).row();
       });
     }
@@ -63,15 +65,12 @@ export class StudentRegSubjectSelectionScreen implements BaseScreen {
       const subjectId = parseInt(data.split(':')[1], 10);
       let selectedIds: number[] = ctx.session.meta.selectedSubjectIds || [];
 
-      if (selectedIds.includes(subjectId)) {
-        selectedIds = selectedIds.filter(id => id !== subjectId);
-      } else {
-        selectedIds.push(subjectId);
-      }
+      selectedIds = selectedIds.includes(subjectId)
+        ? selectedIds.filter((id) => id !== subjectId)
+        : [...selectedIds, subjectId];
 
       ctx.session.meta.selectedSubjectIds = selectedIds;
-      
-      ctx.session.currentScreenId = this.id; 
+      ctx.session.currentScreenId = this.id;
       return this;
     }
 
@@ -92,7 +91,6 @@ export class StudentRegSubjectSelectionScreen implements BaseScreen {
         return new StudentRegistrationScreen();
       } catch (error: any) {
         ctx.session.meta.notice = `❌ Ошибка сохранения: ${error.message || error}`;
-        
         ctx.session.currentScreenId = this.id;
         return this;
       }
@@ -101,7 +99,7 @@ export class StudentRegSubjectSelectionScreen implements BaseScreen {
     return null;
   }
 
-  private cleanupSession(ctx: MyContext) {
+  private cleanupSession(ctx: MyContext): void {
     delete ctx.session.meta.selectionType;
     delete ctx.session.meta.selectedSubjectIds;
   }

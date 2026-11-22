@@ -1,12 +1,17 @@
 import { InlineKeyboard } from 'grammy';
 import { MyContext } from '../types/context.js';
 
+/** Результат разбиения списка элементов на страницы. */
 export interface PaginatedResult<T> {
   pageItems: T[];
   page: number;
   totalPages: number;
 }
 
+/**
+ * Разбивает массив элементов на страницы с учётом двух ограничений Telegram:
+ * максимального количества элементов (`maxItemsPerPage`) и максимальной суммарной длины текста (`maxCharsPerPage`).
+ */
 export function paginateItems<T>(
   items: T[],
   ctx: MyContext,
@@ -36,6 +41,7 @@ export function paginateItems<T>(
     currentPage.push(item);
     currentChars += itemTextLen;
   }
+
   if (currentPage.length > 0) {
     pages.push(currentPage);
   }
@@ -54,6 +60,9 @@ export function paginateItems<T>(
   };
 }
 
+/**
+ * Добавляет в инлайн-клавиатуру ряд кнопок навигации (`⬅️ | 1 / N | ➡️`), если страниц больше одной.
+ */
 export function appendPaginationButtons(
   keyboard: InlineKeyboard,
   page: number,
@@ -75,6 +84,7 @@ export function appendPaginationButtons(
   } else {
     keyboard.text('·', 'noop');
   }
+
   keyboard.row();
 }
 

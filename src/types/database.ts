@@ -1,6 +1,9 @@
 import type { Generated } from 'kysely';
 import type { TicketStatus, ProcessStage } from './entities.js';
 
+/**
+ * Схема таблиц базы данных SQLite для query-builder Kysely.
+ */
 export interface DatabaseSchema {
   users: UsersTable;
   subjects: SubjectsTable;
@@ -76,3 +79,4 @@ export interface UserMainMenuStateTable {
   messageId: number;
   lastUpdated: string;
 }
+

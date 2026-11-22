@@ -6,18 +6,14 @@ import { studentService } from '../../../services/StudentService.js';
 import { stageManager } from '../../../managers/StageManager.js';
 import { StudentTicketSelectScreen } from './student-ticket-select.screen.js';
 import { paginateItems, appendPaginationButtons } from '../../pagination.js';
+import { escapeMarkdown } from '../../../utils/format.js';
 
+/**
+ * Главный экран Студента на этапах `TICKETING` и `FINISHED`.
+ * Выводит назначенные билеты с их статусами (⚪/🟡/🔴/🟢), замечаниями редакторов и пагинацией.
+ */
 export class StudentTicketingScreen implements BaseScreen {
   readonly id = 'student_ticketing';
-
-  private getStatusEmoji(status?: TicketStatus): string {
-    switch (status) {
-      case TicketStatus.APPROVED: return '🟢';
-      case TicketStatus.ON_REWORK: return '🔴';
-      case TicketStatus.ON_CHECK: return '🟡';
-      default: return '⚪';
-    }
-  }
 
   async render(ctx: MyContext, notice?: string): Promise<RenderResult> {
     if (!ctx.from) throw new Error('Пользователь не найден');
@@ -39,7 +35,7 @@ export class StudentTicketingScreen implements BaseScreen {
         tickets,
         ctx,
         'st_tickets_page',
-        t => `${t.ticketNumber}. ${t.question} ${t.editorComment || ''}`,
+        (t) => `${t.ticketNumber}. ${t.question} ${t.editorComment || ''}`,
         10,
         3000
       );
@@ -52,19 +48,17 @@ export class StudentTicketingScreen implements BaseScreen {
       }
 
       for (const [subjectName, subTickets] of grouped) {
-        text += `📘 *${subjectName}*\n`;
+        text += `📘 *${escapeMarkdown(subjectName)}*\n`;
         for (const t of subTickets) {
-          const safeQuestion = t.question.replace(/[_*`]/g, '');
-          text += `  ${this.getStatusEmoji(t.status)} *№${t.ticketNumber}.* ${safeQuestion}\n`;
+          text += `  ${this.getStatusEmoji(t.status)} *№${t.ticketNumber}.* ${escapeMarkdown(t.question)}\n`;
           if (t.status === TicketStatus.ON_REWORK && t.editorComment) {
-            text += `     ↳ _Замечание редактора:_ ${t.editorComment.replace(/[_*`]/g, '')}\n`;
+            text += `     ↳ _Замечание редактора:_ ${escapeMarkdown(t.editorComment)}\n`;
           }
         }
         text += '\n';
       }
 
       text += `⚪ — не отправлен | 🟡 — на проверке\n🔴 — на доработке | 🟢 — принят`;
-
       appendPaginationButtons(keyboard, page, totalPages, 'st_page');
     }
 
@@ -96,12 +90,22 @@ export class StudentTicketingScreen implements BaseScreen {
     }
 
     if (data === 'st_tick:refresh') return this;
+
     if (data === 'st_tick:select') {
       delete ctx.session.meta.st_sel_page;
       return new StudentTicketSelectScreen();
     }
 
     return null;
+  }
+
+  private getStatusEmoji(status?: TicketStatus): string {
+    switch (status) {
+      case TicketStatus.APPROVED: return '🟢';
+      case TicketStatus.ON_REWORK: return '🔴';
+      case TicketStatus.ON_CHECK: return '🟡';
+      default: return '⚪';
+    }
   }
 }
 

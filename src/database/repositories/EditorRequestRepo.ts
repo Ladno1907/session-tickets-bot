@@ -6,6 +6,9 @@ type InsertableEditorRequest = Insertable<EditorRequestsTable>;
 type UpdateableEditorRequest = Updateable<EditorRequestsTable>;
 type SelectableEditorRequest = Selectable<EditorRequestsTable>;
 
+/**
+ * Репозиторий для работы с заявками пользователей на редакторство (`editor_requests`).
+ */
 export class EditorRequestRepository extends BaseRepository {
   constructor(db?: DbOrTrx) {
     super(db);
@@ -15,16 +18,23 @@ export class EditorRequestRepository extends BaseRepository {
     return new EditorRequestRepository(trx);
   }
 
-  async removeAllByUserIdAndSubjectIds(telegramId: number, subjectIds: number[]): Promise<void> {
-    if (subjectIds.length === 0) return;
+  // =========================================================================
+  // ЧТЕНИЕ ДАННЫХ (SELECT)
+  // =========================================================================
 
-    await this.db
-      .deleteFrom('editor_requests')
-      .where('telegramId', '=', telegramId)
-      .where('subjectId', 'in', subjectIds)
+  /**
+   * Получить все заявки на редакторство в системе.
+   */
+  async findAll(): Promise<SelectableEditorRequest[]> {
+    return this.db
+      .selectFrom('editor_requests')
+      .selectAll()
       .execute();
   }
 
+  /**
+   * Найти заявку конкретного пользователя на конкретный предмет.
+   */
   async findByUserAndSubject(telegramId: number, subjectId: number): Promise<SelectableEditorRequest | null> {
     return (
       (await this.db
@@ -36,6 +46,9 @@ export class EditorRequestRepository extends BaseRepository {
     );
   }
 
+  /**
+   * Получить все заявки, поданные конкретным пользователем.
+   */
   async findByUserId(telegramId: number): Promise<SelectableEditorRequest[]> {
     return this.db
       .selectFrom('editor_requests')
@@ -44,6 +57,9 @@ export class EditorRequestRepository extends BaseRepository {
       .execute();
   }
 
+  /**
+   * Получить все заявки, поданные на конкретный предмет.
+   */
   async findBySubjectId(subjectId: number): Promise<SelectableEditorRequest[]> {
     return this.db
       .selectFrom('editor_requests')
@@ -52,13 +68,13 @@ export class EditorRequestRepository extends BaseRepository {
       .execute();
   }
 
-  async findAll(): Promise<SelectableEditorRequest[]> {
-    return this.db
-      .selectFrom('editor_requests')
-      .selectAll()
-      .execute();
-  }
+  // =========================================================================
+  // ЗАПИСЬ (INSERT)
+  // =========================================================================
 
+  /**
+   * Создать новую заявку на редакторство.
+   */
   async insert(data: InsertableEditorRequest): Promise<void> {
     await this.db
       .insertInto('editor_requests')
@@ -66,6 +82,13 @@ export class EditorRequestRepository extends BaseRepository {
       .execute();
   }
 
+  // =========================================================================
+  // УДАЛЕНИЕ (DELETE)
+  // =========================================================================
+
+  /**
+   * Удалить заявку пользователя по конкретному предмету.
+   */
   async remove(telegramId: number, subjectId: number): Promise<void> {
     await this.db
       .deleteFrom('editor_requests')
@@ -73,6 +96,20 @@ export class EditorRequestRepository extends BaseRepository {
       .where('subjectId', '=', subjectId)
       .execute();
   }
+
+  /**
+   * Пакетно удалить заявки пользователя по списку предметов.
+   */
+  async removeAllByUserIdAndSubjectIds(telegramId: number, subjectIds: number[]): Promise<void> {
+    if (subjectIds.length === 0) return;
+
+    await this.db
+      .deleteFrom('editor_requests')
+      .where('telegramId', '=', telegramId)
+      .where('subjectId', 'in', subjectIds)
+      .execute();
+  }
 }
 
 export const editorRequestRepository = new EditorRequestRepository();
+
