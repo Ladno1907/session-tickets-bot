@@ -540,22 +540,27 @@ export class ChiefEditorService {
 
     return this.registrationRepo.findUsersBySubjectId(subjectId);
   }
-
+  
   // =========================================================================
   // СИНХРОНИЗАЦИЯ ВЕДОМОСТЕЙ С GOOGLE SHEETS
   // =========================================================================
 
   /**
-   * Выгружает текущее распределение студентов и редакторов из SQLite в лист Google Sheets.
+   * Выгружает локальные данные SQLite (номера, вопросы, студентов и редакторов)
+   * в соответствующий лист Google Sheets.
    */
   async exportLocalDataToSheet(chiefEditorTelegramId: number, subjectId: number): Promise<void> {
     this.assertAdmin(chiefEditorTelegramId);
-    
+
     const subject = await this.subjectRepo.findById(subjectId);
     if (!subject) throw new Error('Предмет не найден.');
 
     const tickets = await this.ticketRepo.findBySubjectIdSorted(subjectId);
-    if (tickets.length === 0) return;
+
+    const ticketsList = tickets.map((t) => ({
+      ticketNumber: t.ticketNumber,
+      question: t.question,
+    }));
 
     const studentAssignments: { ticketNumber: number; studentFio: string }[] = [];
     const editorAssignments: { ticketNumber: number; editorFio: string }[] = [];
@@ -571,22 +576,63 @@ export class ChiefEditorService {
       }
     }
 
+    await this.ticketSheetRepo.saveTicketsList(subject.subjectName, ticketsList);
     await this.ticketSheetRepo.saveAssignedStudents(subject.subjectName, studentAssignments);
     await this.ticketSheetRepo.saveAssignedEditors(subject.subjectName, editorAssignments);
   }
 
   /**
-   * Импортирует вопросы, назначенных студентов и редакторов «как есть» из листа Google Sheets в SQLite.
+   * Синхронизирует только номера и тексты вопросов предмета из Google Sheets в SQLite,
+   * не затирая привязки студентов и редакторов.
+   */
+  async syncQuestionsOnlyFromSheet(chiefEditorTelegramId: number, subjectId: number): Promise<void> {
+    this.assertAdmin(chiefEditorTelegramId);
+
+    const subject = await this.subjectRepo.findById(subjectId);
+    if (!subject) throw new Error('Предмет не найден.');
+
+    const sheetRows = await this.ticketSheetRepo.getSubjectData(subject.subjectName);
+
+    await db.transaction().execute(async (trx) => {
+      const txTicketRepo = this.ticketRepo.withTransaction(trx);
+
+      const maxTicketNumber = sheetRows.length > 0
+        ? Math.max(...sheetRows.map((r) => r.ticketNumber))
+        : 0;
+      await txTicketRepo.removeTicketsExceedingNumber(subjectId, maxTicketNumber);
+
+      for (const row of sheetRows) {
+        const existingTicket = await txTicketRepo.findBySubjectAndNumber(subjectId, row.ticketNumber);
+        if (existingTicket) {
+          await txTicketRepo.update(existingTicket.ticketId, {
+            question: row.question,
+            updatedAt: new Date().toISOString(),
+          });
+        } else {
+          await txTicketRepo.insert({
+            subjectId,
+            ticketNumber: row.ticketNumber,
+            question: row.question,
+            updatedAt: new Date().toISOString(),
+          });
+        }
+      }
+    });
+  }
+
+  /**
+   * Импортирует вопросы, студентов и редакторов «как есть» из Google Sheets в SQLite.
+   * Предварительно очищает старые назначения по предмету, чтобы удалённые из таблицы
+   * студенты и редакторы гарантированно удалялись и из БД.
    */
   async importDataAsIsFromSheet(chiefEditorTelegramId: number, subjectId: number): Promise<void> {
     this.assertAdmin(chiefEditorTelegramId);
-    
+
     const subject = await this.subjectRepo.findById(subjectId);
     if (!subject) throw new Error('Предмет не найден.');
 
     const sheetRows = await this.ticketSheetRepo.getSubjectData(subject.subjectName);
     const allUsers = await this.userRepo.findAll();
-    
     const nameToIdMap = new Map<string, number>(
       allUsers.map((u) => [u.userName.toLowerCase().trim(), u.telegramId])
     );
@@ -597,11 +643,28 @@ export class ChiefEditorService {
       const txEditorRepo = this.editorRepo.withTransaction(trx);
       const txUserRepo = this.userRepo.withTransaction(trx);
 
+      // 1. Очищаем старые записи по предмету перед импортом
+      const oldRegs = await txRegRepo.findBySubjectId(subjectId);
+      for (const reg of oldRegs) {
+        await txRegRepo.remove(reg.telegramId, subjectId);
+      }
+
+      const oldEditors = await txEditorRepo.findBySubjectId(subjectId);
+      for (const ed of oldEditors) {
+        await txEditorRepo.remove(ed.telegramId, subjectId);
+      }
+
+      await txTicketRepo.clearStudentAssignmentsBySubject(subjectId);
+      await txTicketRepo.clearEditorAssignmentsBySubject(subjectId);
+
       const maxTicketNumber = sheetRows.length > 0
         ? Math.max(...sheetRows.map((r) => r.ticketNumber))
         : 0;
-
       await txTicketRepo.removeTicketsExceedingNumber(subjectId, maxTicketNumber);
+
+      // 2. Записываем актуальные данные из таблицы
+      const activeStudentIds = new Set<number>();
+      const activeEditorIds = new Set<number>();
 
       for (const row of sheetRows) {
         const studentId = row.studentFio ? nameToIdMap.get(row.studentFio.toLowerCase().trim()) : undefined;
@@ -623,39 +686,73 @@ export class ChiefEditorService {
         }
 
         if (studentId) {
-          try { await txRegRepo.insert({ telegramId: studentId, subjectId }); } catch {}
-          await txUserRepo.update(studentId, { student: 1 });
+          activeStudentIds.add(studentId);
         }
-
         if (editorId) {
-          try { await txEditorRepo.insert({ telegramId: editorId, subjectId }); } catch {}
-          await txUserRepo.update(editorId, { editor: 1 });
+          activeEditorIds.add(editorId);
         }
+      }
+
+      for (const sId of activeStudentIds) {
+        await txRegRepo.insert({ telegramId: sId, subjectId });
+      }
+      for (const eId of activeEditorIds) {
+        await txEditorRepo.insert({ telegramId: eId, subjectId });
+      }
+
+      // 3. Пересчитываем глобальные флаги student / editor для затронутых пользователей
+      const affectedUserIds = new Set<number>([
+        ...oldRegs.map((r) => r.telegramId),
+        ...oldEditors.map((e) => e.telegramId),
+        ...activeStudentIds,
+        ...activeEditorIds,
+      ]);
+
+      for (const uId of affectedUserIds) {
+        const userRegs = await txRegRepo.findByUserId(uId);
+        const userEdits = await txEditorRepo.findByUserId(uId);
+        await txUserRepo.update(uId, {
+          student: userRegs.length > 0 ? 1 : 0,
+          editor: userEdits.length > 0 ? 1 : 0,
+        });
       }
     });
   }
 
   /**
-   * Импортирует данные из Google Sheets и запускает перераспределение студентов «змейкой».
+   * Обновляет вопросы из Google Sheets и перераспределяет студентов «змейкой»
+   * по текущим регистрациям в БД.
    */
   async importWithStudentRedistribution(chiefEditorTelegramId: number, subjectId: number): Promise<void> {
     this.assertAdmin(chiefEditorTelegramId);
-    
-    await this.importDataAsIsFromSheet(chiefEditorTelegramId, subjectId);
-    
+    await this.syncQuestionsOnlyFromSheet(chiefEditorTelegramId, subjectId);
+
     const { distributionService } = await import('./DistributionService.js');
     await distributionService.distributeTicketsToStudents();
   }
 
   /**
-   * Импортирует данные из Google Sheets и запускает пропорциональное перераспределение редакторов.
+   * Обновляет вопросы из Google Sheets и пропорционально перераспределяет редакторов
+   * по текущему составу редакторов предмета в БД.
    */
   async importWithEditorRedistribution(chiefEditorTelegramId: number, subjectId: number): Promise<void> {
     this.assertAdmin(chiefEditorTelegramId);
-    
-    await this.importDataAsIsFromSheet(chiefEditorTelegramId, subjectId);
-    
+    await this.syncQuestionsOnlyFromSheet(chiefEditorTelegramId, subjectId);
+
     const { distributionService } = await import('./DistributionService.js');
+    await distributionService.distributeTicketsToEditors();
+  }
+
+  /**
+   * Обновляет вопросы из Google Sheets и полностью перераспределяет
+   * как студентов («змейкой»), так и редакторов.
+   */
+  async importWithFullRedistribution(chiefEditorTelegramId: number, subjectId: number): Promise<void> {
+    this.assertAdmin(chiefEditorTelegramId);
+    await this.syncQuestionsOnlyFromSheet(chiefEditorTelegramId, subjectId);
+
+    const { distributionService } = await import('./DistributionService.js');
+    await distributionService.distributeTicketsToStudents();
     await distributionService.distributeTicketsToEditors();
   }
 }

@@ -19,7 +19,7 @@ export class BaseSheetRepository {
   protected async getSheetsClient(): Promise<sheets_v4.Sheets> {
     const auth = new google.auth.GoogleAuth({
       keyFile: this.keyFile,
-      scopes: ['https://googleapis.com'],
+      scopes: ['https://www.googleapis.com/auth/spreadsheets'],
     });
 
     return google.sheets({ version: 'v4', auth });

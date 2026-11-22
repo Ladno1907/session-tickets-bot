@@ -70,15 +70,51 @@ export class TicketSheetRepository extends BaseSheetRepository {
   // =========================================================================
 
   /**
-   * Записывает распределённых студентов в колонку C (`C8:C...`).
+   * Записывает номера билетов и вопросы в колонки A и B (`A8:B...`)
+   * и очищает старые значения ниже конца списка.
+   */
+  async saveTicketsList(
+    sheetName: string,
+    tickets: { ticketNumber: number; question: string }[]
+  ): Promise<void> {
+    const sheets = await this.getSheetsClient();
+
+    await sheets.spreadsheets.values.clear({
+      spreadsheetId: this.spreadsheetId,
+      range: `'${sheetName.trim()}'!A${this.startRow}:B1000`,
+    });
+
+    if (tickets.length === 0) return;
+
+    const sorted = [...tickets].sort((a, b) => a.ticketNumber - b.ticketNumber);
+    const flatRows = sorted.map((t) => [t.ticketNumber.toString(), t.question]);
+    const endRow = this.startRowIndex + flatRows.length;
+    const range = `'${sheetName.trim()}'!A${this.startRow}:B${endRow}`;
+
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: this.spreadsheetId,
+      range,
+      valueInputOption: 'RAW',
+      requestBody: { values: flatRows },
+    });
+  }
+
+  /**
+   * Очищает старые фамилии в колонке C (`C8:C1000`) и записывает распределённых студентов (`C8:C...`).
    */
   async saveAssignedStudents(
     sheetName: string,
     assignments: { ticketNumber: number; studentFio: string }[]
   ): Promise<void> {
+    const sheets = await this.getSheetsClient();
+
+    await sheets.spreadsheets.values.clear({
+      spreadsheetId: this.spreadsheetId,
+      range: `'${sheetName.trim()}'!C${this.startRow}:C1000`,
+    });
+
     if (assignments.length === 0) return;
 
-    const sheets = await this.getSheetsClient();
     const maxNumber = Math.max(...assignments.map((a) => a.ticketNumber));
     const flatRows: string[][] = new Array(maxNumber).fill(null).map(() => ['']);
 
@@ -98,20 +134,27 @@ export class TicketSheetRepository extends BaseSheetRepository {
   }
 
   /**
-   * Записывает распределённых редакторов в колонку D (`D8:D...`)
+   * Снимает объединения, очищает колонку D (`D8:D1000`), записывает распределённых редакторов
    * и объединяет смежные ячейки с одинаковым ФИО редактора (`mergeCells`).
    */
   async saveAssignedEditors(
     sheetName: string,
     assignments: { ticketNumber: number; editorFio: string }[]
   ): Promise<void> {
-    if (assignments.length === 0) return;
-
     const sheets = await this.getSheetsClient();
     const sheetId = await this.getSheetIdByName(sheets, sheetName);
     if (sheetId === null) {
       throw new Error(`Лист "${sheetName}" не найден в Google Таблице.`);
     }
+
+    await this.unmergeEditorColumn(sheets, sheetName, sheetId);
+
+    await sheets.spreadsheets.values.clear({
+      spreadsheetId: this.spreadsheetId,
+      range: `'${sheetName.trim()}'!D${this.startRow}:D1000`,
+    });
+
+    if (assignments.length === 0) return;
 
     const sortedAssignments = [...assignments].sort((a, b) => a.ticketNumber - b.ticketNumber);
     const maxNumber = sortedAssignments[sortedAssignments.length - 1].ticketNumber;
@@ -161,8 +204,6 @@ export class TicketSheetRepository extends BaseSheetRepository {
 
       i = j;
     }
-
-    await this.unmergeEditorColumn(sheets, sheetName, sheetId);
 
     const endRow = this.startRowIndex + flatRowsToWrite.length;
     const updateRange = `'${sheetName.trim()}'!D${this.startRow}:D${endRow}`;
@@ -236,7 +277,8 @@ export class TicketSheetRepository extends BaseSheetRepository {
   // =========================================================================
 
   /**
-   * Возвращает внутренний числовой `sheetId` листа по его названию или `null`, если лист не найден.
+   * Возвращает внутренний числовой `sheetId` листа по его названию
+   * или `null`, если лист не найден.
    */
   private async getSheetIdByName(
     sheets: sheets_v4.Sheets,
@@ -303,4 +345,3 @@ export class TicketSheetRepository extends BaseSheetRepository {
 }
 
 export const ticketSheetRepository = new TicketSheetRepository();
-

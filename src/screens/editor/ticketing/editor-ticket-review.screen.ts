@@ -80,7 +80,12 @@ export class EditorTicketReviewScreen implements BaseScreen {
 
     let documentPath: string | undefined;
     if (ticket.fileVersion && ticket.fileExtension) {
-      const candidatePath = ticketFileStorage.getFilePath(ticket.ticketId, ticket.fileVersion, ticket.fileExtension);
+      const candidatePath = ticketFileStorage.getFilePath(
+        ticket.subjectName,
+        ticket.ticketNumber,
+        ticket.fileVersion,
+        ticket.fileExtension
+      );
       if (existsSync(candidatePath)) {
         documentPath = candidatePath;
         // Лимит подписи к документу в Telegram API — 1024 символа
@@ -191,8 +196,18 @@ export class EditorTicketReviewScreen implements BaseScreen {
       try {
         const doc = ctx.message.document;
         const ext = doc.file_name ? doc.file_name.slice(doc.file_name.lastIndexOf('.')) : '.bin';
+
+        const ticketView = await editorService.getTicket(ctx.from!.id, ticketId);
+        if (!ticketView) throw new Error('Билет не найден');
+
         const newVersion = await editorService.replaceTicket(ctx.from!.id, ticketId, ext);
-        await ticketFileStorage.saveTelegramDocument(ctx.api, doc.file_id, ticketId, newVersion);
+        await ticketFileStorage.saveTelegramDocument(
+          ctx.api,
+          doc.file_id,
+          ticketView.subjectName,
+          ticketView.ticketNumber,
+          newVersion
+        );
 
         delete ctx.session.meta.edActionMode;
         ctx.session.meta.notice = `✅ Файл билета успешно заменён (версия v${newVersion})!`;

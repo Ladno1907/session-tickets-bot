@@ -79,7 +79,13 @@ export class StudentTicketSubmitScreen implements BaseScreen {
         );
 
         try {
-          await ticketFileStorage.saveTelegramDocument(ctx.api, doc.file_id, ticketId, res.version);
+          await ticketFileStorage.saveTelegramDocument(
+            ctx.api,
+            doc.file_id,
+            res.subjectName,
+            res.ticketNumber,
+            res.version
+          );
         } catch (downloadErr) {
           await studentService.revertTicketStatus(ticketId);
           throw downloadErr;

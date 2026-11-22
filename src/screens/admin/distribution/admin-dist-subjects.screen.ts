@@ -47,8 +47,9 @@ export class AdminDistSubjectsScreen implements BaseScreen {
     if (currentSub) {
       keyboard.text('📤 Выгрузить локальную БД в таблицу (Сброс)', 'sheet_sync:export_local').row()
               .text('📥 Загрузить «Как есть» (Без пересчета)', 'sheet_sync:import_as_is').row()
-              .text('🔄 Загрузить + Пересчитать Студентов змейкой', 'sheet_sync:shake_students').row()
-              .text('👑 Загрузить + Пересчитать Редакторов', 'sheet_sync:shake_editors').row();
+              .text('🔄 Загрузить вопросы + Пересчитать Студентов', 'sheet_sync:shake_students').row()
+              .text('👑 Загрузить вопросы + Пересчитать Редакторов', 'sheet_sync:shake_editors').row()
+              .text('⚡ Загрузить вопросы + Пересчитать ВСЕХ', 'sheet_sync:shake_all').row();
     }
 
     keyboard.text('⬅️ Назад в меню', 'sheet_sync:back');
@@ -100,6 +101,11 @@ export class AdminDistSubjectsScreen implements BaseScreen {
         fn: () => chiefEditorService.importWithEditorRedistribution(ctx.from!.id, targetSubjectId),
         okMsg: '✅ Состав обновлен. Редакторы заново пропорционально распределены по билетам!',
         errPrefix: '❌ Ошибка перерасчета',
+      },
+      'sheet_sync:shake_all': {
+        fn: () => chiefEditorService.importWithFullRedistribution(ctx.from!.id, targetSubjectId),
+        okMsg: '✅ Вопросы обновлены. Студенты и редакторы заново распределены и выгружены в таблицу!',
+        errPrefix: '❌ Ошибка полного перерасчета',
       },
     };
 

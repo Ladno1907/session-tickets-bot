@@ -1,4 +1,5 @@
-import { Context, SessionFlavor } from 'grammy';
+import { Api, Context, SessionFlavor } from 'grammy';
+import { FileApiFlavor, FileFlavor } from '@grammyjs/files';
 
 /**
  * Структура пользовательской сессии grammY, сохраняемой в SQLite.
@@ -11,5 +12,5 @@ export interface BotSessionData {
 }
 
 /** Расширенный контекст grammY с поддержкой сессий бота. */
-export interface MyContext extends Context, SessionFlavor<BotSessionData> {}
-
+export type MyContext = FileFlavor<Context & SessionFlavor<BotSessionData>>;
+export type MyApi = FileApiFlavor<Api>;

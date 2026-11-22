@@ -82,7 +82,7 @@ export class AdminRegSubjectEditorsScreen implements BaseScreen {
     }
 
     if (data.startsWith('editor_action:')) {
-      ctx.session.meta.editorInputType = data.split(':');
+      ctx.session.meta.editorInputType = data.split(':')[1];
       return new AdminRegEditorFioInputScreen();
     }
 

@@ -1,6 +1,7 @@
 import { Bot, session } from 'grammy';
+import { hydrateFiles } from '@grammyjs/files';
 import { config } from './config.js';
-import { MyContext, BotSessionData } from './types/context.js';
+import { MyContext, MyApi, BotSessionData } from './types/context.js';
 import { ProcessStage } from './types/entities.js';
 import { migrate } from './database/migrate.js';
 import { sqliteSessionAdapter } from './database/adapters/SQLiteSessionAdapter.js';
@@ -10,7 +11,7 @@ import { chiefEditorService } from './services/ChiefEditorService.js';
 import { studentService } from './services/StudentService.js';
 import { screenFactory } from './screens/screenFactory.js';
 
-export const bot = new Bot<MyContext>(config.botToken);
+export const bot = new Bot<MyContext, MyApi>(config.botToken);
 
 /**
  * Точка входа приложения: выполняет миграции БД, настраивает middleware,
@@ -31,6 +32,12 @@ async function runBot(): Promise<void> {
         }
       }
       return prev(method, payload, signal);
+    });
+
+    bot.api.config.use(hydrateFiles(bot.token));
+    bot.use((ctx, next) => {
+      ctx.api.config.use(hydrateFiles(bot.token));
+      return next();
     });
 
     bot.use(

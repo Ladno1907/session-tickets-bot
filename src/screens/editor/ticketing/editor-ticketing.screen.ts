@@ -123,14 +123,14 @@ export class EditorTicketingScreen implements BaseScreen {
     if (data === 'noop') return null;
 
     if (data.startsWith('ed_page:')) {
-      ctx.session.meta.ed_tickets_page = parseInt(data.split(':')[0], 10);
+      ctx.session.meta.ed_tickets_page = parseInt(data.split(':')[1], 10);
       return this;
     }
 
     if (data === 'ed_tick:refresh') return this;
 
     if (data.startsWith('ed_review:')) {
-      const ticketId = parseInt(data.split(':')[0], 10);
+      const ticketId = parseInt(data.split(':')[1], 10);
       ctx.session.meta.reviewTicketId = ticketId;
       delete ctx.session.meta.edActionMode;
       return new EditorTicketReviewScreen();

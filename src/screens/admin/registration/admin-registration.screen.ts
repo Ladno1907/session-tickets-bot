@@ -98,7 +98,7 @@ export class AdminRegistrationScreen implements BaseScreen {
     }
 
     if (data.startsWith('reg_sub_action:')) {
-      ctx.session.meta.subjectAction = data.split(':');
+      ctx.session.meta.subjectAction = data.split(':')[1];
       return new AdminRegSelectSubjectScreen();
     }
 
