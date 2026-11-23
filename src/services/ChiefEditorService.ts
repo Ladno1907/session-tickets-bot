@@ -1,8 +1,9 @@
 import { Bot } from 'grammy';
+import { existsSync } from 'node:fs';
 import { db } from '../database/client.js';
 import { bot } from '../bot.js';
 import { MyContext } from '../types/context.js';
-import { ProcessConfig, ProcessStage } from '../types/entities.js';
+import { ProcessConfig, ProcessStage, TicketStatus } from '../types/entities.js';
 import { ParsedSubjectRow } from '../types/sheets.js';
 import { config } from '../config.js';
 
@@ -15,6 +16,7 @@ import { subjectRepository } from '../database/repositories/SubjectRepo.js';
 import { editorRequestRepository } from '../database/repositories/EditorRequestRepo.js';
 import { ticketSheetRepository } from '../database/sheetRepositories/TicketSheetRepository.js';
 import { registrationRepository } from '../database/repositories/RegistrationRepo.js';
+import { ticketFileStorage } from '../storage/TicketFileStorage.js';
 
 /**
  * Сервис бизнес-логики Главного Редактора (Администратора сессии).
@@ -643,7 +645,6 @@ export class ChiefEditorService {
       const txEditorRepo = this.editorRepo.withTransaction(trx);
       const txUserRepo = this.userRepo.withTransaction(trx);
 
-      // 1. Очищаем старые записи по предмету перед импортом
       const oldRegs = await txRegRepo.findBySubjectId(subjectId);
       for (const reg of oldRegs) {
         await txRegRepo.remove(reg.telegramId, subjectId);
@@ -662,7 +663,6 @@ export class ChiefEditorService {
         : 0;
       await txTicketRepo.removeTicketsExceedingNumber(subjectId, maxTicketNumber);
 
-      // 2. Записываем актуальные данные из таблицы
       const activeStudentIds = new Set<number>();
       const activeEditorIds = new Set<number>();
 
@@ -700,7 +700,6 @@ export class ChiefEditorService {
         await txEditorRepo.insert({ telegramId: eId, subjectId });
       }
 
-      // 3. Пересчитываем глобальные флаги student / editor для затронутых пользователей
       const affectedUserIds = new Set<number>([
         ...oldRegs.map((r) => r.telegramId),
         ...oldEditors.map((e) => e.telegramId),
@@ -728,7 +727,7 @@ export class ChiefEditorService {
     await this.syncQuestionsOnlyFromSheet(chiefEditorTelegramId, subjectId);
 
     const { distributionService } = await import('./DistributionService.js');
-    await distributionService.distributeTicketsToStudents();
+    await distributionService.distributeTicketsToStudents(subjectId);
   }
 
   /**
@@ -740,7 +739,7 @@ export class ChiefEditorService {
     await this.syncQuestionsOnlyFromSheet(chiefEditorTelegramId, subjectId);
 
     const { distributionService } = await import('./DistributionService.js');
-    await distributionService.distributeTicketsToEditors();
+    await distributionService.distributeTicketsToEditors(subjectId);
   }
 
   /**
@@ -752,8 +751,201 @@ export class ChiefEditorService {
     await this.syncQuestionsOnlyFromSheet(chiefEditorTelegramId, subjectId);
 
     const { distributionService } = await import('./DistributionService.js');
-    await distributionService.distributeTicketsToStudents();
-    await distributionService.distributeTicketsToEditors();
+    await distributionService.distributeTicketsToStudents(subjectId);
+    await distributionService.distributeTicketsToEditors(subjectId);
+  }
+
+  // =========================================================================
+  // МОНИТОРИНГ СДАЧИ, ВЫГРУЗКА ФАЙЛОВ И РАССЫЛКИ (TICKETING / FINISHED)
+  // =========================================================================
+
+  /**
+   * Возвращает детальную сводку прогресса сдачи билетов по каждому предмету:
+   * общее число билетов и разбивку по статусам (`approved`, `onCheck`, `onRework`, `inProgress`).
+   */
+  async getTicketingProgressStats(chiefEditorTelegramId: number): Promise<{
+    subjectId: number;
+    subjectName: string;
+    total: number;
+    approved: number;
+    onCheck: number;
+    onRework: number;
+    inProgress: number;
+  }[]> {
+    this.assertAdmin(chiefEditorTelegramId);
+
+    const subjects = await this.subjectRepo.findAll();
+    const result = [];
+
+    for (const sub of subjects) {
+      const tickets = await this.ticketRepo.findBySubjectIdSorted(sub.subjectId);
+      let approved = 0;
+      let onCheck = 0;
+      let onRework = 0;
+      let inProgress = 0;
+
+      for (const t of tickets) {
+        switch (t.status) {
+          case TicketStatus.APPROVED:
+            approved++;
+            break;
+          case TicketStatus.ON_CHECK:
+            onCheck++;
+            break;
+          case TicketStatus.ON_REWORK:
+            onRework++;
+            break;
+          default:
+            inProgress++;
+            break;
+        }
+      }
+
+      result.push({
+        subjectId: sub.subjectId,
+        subjectName: sub.subjectName,
+        total: tickets.length,
+        approved,
+        onCheck,
+        onRework,
+        inProgress,
+      });
+    }
+
+    return result;
+  }
+
+  /**
+   * Возвращает список путей к существующим на диске файлам решений по выбранному предмету.
+   * @param onlyApproved Если `true` — только одобренные (`APPROVED`), иначе все загруженные (`APPROVED` + `ON_CHECK` + `ON_REWORK`).
+   */
+  async getTicketFilesForSubject(
+    chiefEditorTelegramId: number,
+    subjectId: number,
+    onlyApproved: boolean = true
+  ): Promise<{ subjectName: string; files: { ticketNumber: number; filePath: string }[] }> {
+    this.assertAdmin(chiefEditorTelegramId);
+
+    const subject = await this.subjectRepo.findById(subjectId);
+    if (!subject) {
+      throw new Error('Предмет не найден.');
+    }
+
+    const tickets = await this.ticketRepo.findBySubjectIdSorted(subjectId);
+    const files: { ticketNumber: number; filePath: string }[] = [];
+
+    for (const t of tickets) {
+      if (!t.fileVersion || !t.fileExtension) continue;
+      if (onlyApproved && t.status !== TicketStatus.APPROVED) continue;
+
+      const filePath = ticketFileStorage.getFilePath(
+        subject.subjectName,
+        t.ticketNumber,
+        t.fileVersion,
+        t.fileExtension
+      );
+
+      if (existsSync(filePath)) {
+        files.push({ ticketNumber: t.ticketNumber, filePath });
+      }
+    }
+
+    return { subjectName: subject.subjectName, files };
+  }
+
+  /**
+   * Возвращает массив Telegram ID получателей для массовой рассылки администратора.
+   */
+  async getBroadcastRecipientIds(
+    chiefEditorTelegramId: number,
+    audience: 'all' | 'students' | 'editors'
+  ): Promise<number[]> {
+    this.assertAdmin(chiefEditorTelegramId);
+
+    const allUsers = await this.userRepo.findAll();
+
+    switch (audience) {
+      case 'students':
+        return allUsers.filter((u) => u.student === 1).map((u) => u.telegramId);
+      case 'editors':
+        return allUsers.filter((u) => u.editor === 1).map((u) => u.telegramId);
+      case 'all':
+      default:
+        return allUsers.map((u) => u.telegramId);
+    }
+  }
+
+  /**
+   * Возвращает уникальные Telegram ID студентов или редакторов, привязанных к выбранным предметам.
+   */
+  async getBroadcastRecipientsBySubjects(
+    chiefEditorTelegramId: number,
+    role: 'students' | 'editors',
+    subjectIds: number[]
+  ): Promise<number[]> {
+    this.assertAdmin(chiefEditorTelegramId);
+    if (subjectIds.length === 0) return [];
+
+    const idSet = new Set<number>();
+
+    for (const subId of subjectIds) {
+      if (role === 'students') {
+        const users = await this.registrationRepo.findUsersBySubjectId(subId);
+        users.forEach((u) => idSet.add(u.telegramId));
+      } else {
+        const editors = await this.editorRepo.findBySubjectId(subId);
+        editors.forEach((e) => idSet.add(e.telegramId));
+      }
+    }
+
+    return Array.from(idSet);
+  }
+
+  /**
+   * Ищет пользователей по списку запросов (номера из списка 1..N или части ФИО через запятую).
+   */
+  async resolveBroadcastUsersByQuery(
+    chiefEditorTelegramId: number,
+    rawInput: string
+  ): Promise<{ matched: { telegramId: number; name: string }[]; missed: string[] }> {
+    this.assertAdmin(chiefEditorTelegramId);
+
+    const allUsers = await this.userRepo.findAll();
+    const tokens = rawInput
+      .split(',')
+      .map((t) => t.trim())
+      .filter((t) => t.length > 0);
+
+    const matchedMap = new Map<number, { telegramId: number; name: string }>();
+    const missed: string[] = [];
+
+    for (const token of tokens) {
+      if (/^\d+$/.test(token)) {
+        const idx = parseInt(token, 10) - 1;
+        if (idx >= 0 && idx < allUsers.length) {
+          const u = allUsers[idx];
+          matchedMap.set(u.telegramId, { telegramId: u.telegramId, name: u.userName });
+        } else {
+          missed.push(`№${token}`);
+        }
+        continue;
+      }
+
+      const lower = token.toLowerCase();
+      const foundUsers = allUsers.filter((u) => u.userName.toLowerCase().includes(lower));
+      if (foundUsers.length > 0) {
+        for (const u of foundUsers) {
+          matchedMap.set(u.telegramId, { telegramId: u.telegramId, name: u.userName });
+        }
+      } else {
+        missed.push(token);
+      }
+    }
+
+    return {
+      matched: Array.from(matchedMap.values()),
+      missed,
+    };
   }
 }
 

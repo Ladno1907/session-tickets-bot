@@ -357,12 +357,12 @@ export class MessageManager {
         for (const chunk of albumChunks) {
           await bot.api.sendMediaGroup(
             userId,
-            chunk.map((m) => ({ type: 'document', media: m }))
+            chunk.map((m) => ({ type: 'document', media: new InputFile(m) }))
           );
           await new Promise((resolve) => setTimeout(resolve, config.delayMs));
         }
       } else {
-        await bot.api.sendDocument(userId, media);
+        await bot.api.sendDocument(userId, new InputFile(media));
         await new Promise((resolve) => setTimeout(resolve, config.delayMs));
       }
       return true;

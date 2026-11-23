@@ -5,6 +5,7 @@ import { getDeadlinesText } from '../utils.js';
 import { chiefEditorService } from '../../../services/ChiefEditorService.js';
 import { AdminDistStatsScreen } from './admin-dist-stats.screen.js';
 import { AdminDistSubjectsScreen } from './admin-dist-subjects.screen.js';
+import { AdminTicketingScreen } from '../ticketing/admin-ticketing.screen.js';
 
 /**
  * Главный экран Администратора на этапе проверки распределения (`DISTRIBUTION`).
@@ -57,7 +58,7 @@ export class AdminDistributionScreen implements BaseScreen {
         await chiefEditorService.startNextStage(ctx.from!.id);
         ctx.session.meta = {};
         ctx.session.meta.notice = '🚀 Этап подготовки и проверки билетов успешно запущен для всех участников!';
-        return null; // Переход на AdminTicketingScreen после его подключения
+        return new AdminTicketingScreen();
       } catch (e: any) {
         ctx.session.meta.notice = `❌ Ошибка перехода: ${e.message || e}`;
         return this;

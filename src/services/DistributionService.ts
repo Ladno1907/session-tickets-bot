@@ -32,14 +32,18 @@ export class DistributionService {
    * Распределяет билеты каждого предмета между записавшимися студентами алгоритмом «змейки»
    * (чередование крайних сложных/лёгких билетов) и синхронизирует результат с Google Sheets.
    */
-  public async distributeTicketsToStudents(): Promise<void> {
+  public async distributeTicketsToStudents(targetSubjectId?: number): Promise<void> {
     const subjectsWithAssignments = await db.transaction().execute(async (trx) => {
       const txSubjectRepo = this.subjectRepo.withTransaction(trx);
       const txTicketRepo = this.ticketRepo.withTransaction(trx);
       const txRegistrationRepo = this.registrationRepo.withTransaction(trx);
       const txUserRepo = this.userRepo.withTransaction(trx);
 
-      const subjects = await txSubjectRepo.findAll();
+      const allSubjects = await txSubjectRepo.findAll();
+      const subjects = targetSubjectId !== undefined
+        ? allSubjects.filter((s) => s.subjectId === targetSubjectId)
+        : allSubjects;
+
       const results: { sheetName: string; data: { ticketNumber: number; studentFio: string }[] }[] = [];
 
       for (const subject of subjects) {
@@ -101,13 +105,17 @@ export class DistributionService {
    * Пропорционально нарезает билеты каждого предмета непрерывными диапазонами между
    * утверждёнными редакторами и выгружает с объединёнными ячейками в Google Sheets.
    */
-  public async distributeTicketsToEditors(): Promise<void> {
+  public async distributeTicketsToEditors(targetSubjectId?: number): Promise<void> {
     const editorsWithAssignments = await db.transaction().execute(async (trx) => {
       const txSubjectRepo = this.subjectRepo.withTransaction(trx);
       const txTicketRepo = this.ticketRepo.withTransaction(trx);
       const txEditorRepo = this.editorRepo.withTransaction(trx);
 
-      const subjects = await txSubjectRepo.findAll();
+      const allSubjects = await txSubjectRepo.findAll();
+      const subjects = targetSubjectId !== undefined
+        ? allSubjects.filter((s) => s.subjectId === targetSubjectId)
+        : allSubjects;
+
       const results: { sheetName: string; data: { ticketNumber: number; editorFio: string }[] }[] = [];
 
       for (const subject of subjects) {

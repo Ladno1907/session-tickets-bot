@@ -16,6 +16,11 @@ import { AdminDistributionScreen } from './admin/distribution/admin-distribution
 import { AdminDistStatsScreen } from './admin/distribution/admin-dist-stats.screen.js';
 import { AdminDistSubjectsScreen } from './admin/distribution/admin-dist-subjects.screen.js';
 
+import { AdminTicketingScreen } from './admin/ticketing/admin-ticketing.screen.js';
+import { AdminTickFilesScreen } from './admin/ticketing/admin-tick-files.screen.js';
+import { AdminTickBroadcastScreen } from './admin/ticketing/admin-tick-broadcast.screen.js';
+import { AdminTickSheetsScreen } from './admin/ticketing/admin-tick-sheets.screen.js';
+
 import { StudentRegFioInputScreen } from './student/registration/student-reg-fio-input.screen.js';
 import { StudentRegistrationScreen } from './student/registration/student-registration.screen.js';
 import { StudentRegSubjectSelectionScreen } from './student/registration/student-reg-subject-selection.screen.js';
@@ -51,6 +56,13 @@ export class ScreenFactory {
     admin_distribution: AdminDistributionScreen,
     admin_dist_stats: AdminDistStatsScreen,
     admin_dist_subjects: AdminDistSubjectsScreen,
+
+    // Экраны Администратора: Подготовка билетов и завершение
+    admin_ticketing: AdminTicketingScreen,
+    admin_finished: AdminTicketingScreen,
+    admin_tick_files: AdminTickFilesScreen,
+    admin_tick_broadcast: AdminTickBroadcastScreen,
+    admin_tick_sheets: AdminTickSheetsScreen,
 
     // Экраны Студента
     student_reg_fio_input: StudentRegFioInputScreen,
