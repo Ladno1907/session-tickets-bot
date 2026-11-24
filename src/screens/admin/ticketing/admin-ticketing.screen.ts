@@ -9,6 +9,7 @@ import { escapeMarkdown } from '../../../utils/format.js';
 import { AdminTickFilesScreen } from './admin-tick-files.screen.js';
 import { AdminTickBroadcastScreen } from './admin-tick-broadcast.screen.js';
 import { AdminTickSheetsScreen } from './admin-tick-sheets.screen.js';
+import { AdminTickAddUserScreen } from './admin-tick-add-user.screen.js';
 
 /**
  * Главный экран Администратора на этапах активной подготовки (`TICKETING`) и завершения (`FINISHED`).
@@ -49,7 +50,8 @@ export class AdminTicketingScreen implements BaseScreen {
       .text('🔄 Обновить статистику', 'tick_adm:refresh').row()
       .text('📥 Скачать файлы билетов', 'tick_adm:files').row()
       .text('📢 Массовая рассылка (Спам)', 'tick_adm:broadcast').row()
-      .text('📝 Синхронизация с таблицами', 'tick_adm:sheets').row();
+      .text('📝 Синхронизация с таблицами', 'tick_adm:sheets').row()
+      .text('➕ Добавить участника', 'tick_adm:add_user').row();
 
     if (!isFinished) {
       keyboard.text('🏁 Завершить сессию (Закрыть приём)', 'tick_adm:finish');
@@ -72,6 +74,7 @@ export class AdminTicketingScreen implements BaseScreen {
     if (data === 'tick_adm:files') return new AdminTickFilesScreen();
     if (data === 'tick_adm:broadcast') return new AdminTickBroadcastScreen();
     if (data === 'tick_adm:sheets') return new AdminTickSheetsScreen();
+    if (data === 'tick_adm:add_user') return new AdminTickAddUserScreen();
 
     if (data === 'tick_adm:finish') {
       try {

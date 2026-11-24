@@ -20,6 +20,7 @@ import { AdminTicketingScreen } from './admin/ticketing/admin-ticketing.screen.j
 import { AdminTickFilesScreen } from './admin/ticketing/admin-tick-files.screen.js';
 import { AdminTickBroadcastScreen } from './admin/ticketing/admin-tick-broadcast.screen.js';
 import { AdminTickSheetsScreen } from './admin/ticketing/admin-tick-sheets.screen.js';
+import { AdminTickAddUserScreen } from './admin/ticketing/admin-tick-add-user.screen.js';
 
 import { StudentRegFioInputScreen } from './student/registration/student-reg-fio-input.screen.js';
 import { StudentRegistrationScreen } from './student/registration/student-registration.screen.js';
@@ -63,6 +64,7 @@ export class ScreenFactory {
     admin_tick_files: AdminTickFilesScreen,
     admin_tick_broadcast: AdminTickBroadcastScreen,
     admin_tick_sheets: AdminTickSheetsScreen,
+    admin_tick_add_user: AdminTickAddUserScreen,
 
     // Экраны Студента
     student_reg_fio_input: StudentRegFioInputScreen,

@@ -120,14 +120,14 @@ export class TicketRepository extends BaseRepository {
   /**
    * Назначить билет студенту и перевести статус в `IN_PROGRESS`.
    */
-  async assignTicketToStudent(ticketId: number, studentId: number): Promise<void> {
+   async assignTicketToStudent(ticketId: number, studentId: number): Promise<void> {
     await this.db
       .updateTable('tickets')
-      .set({
+      .set((eb) => ({
         studentId,
-        status: TicketStatus.IN_PROGRESS,
+        status: eb.fn.coalesce('status', sql.lit(TicketStatus.IN_PROGRESS)),
         updatedAt: new Date().toISOString(),
-      })
+      }))
       .where('ticketId', '=', ticketId)
       .execute();
   }
@@ -151,7 +151,6 @@ export class TicketRepository extends BaseRepository {
       .updateTable('tickets')
       .set({
         studentId: sql`NULL`,
-        status: sql`NULL`,
       })
       .where('subjectId', '=', subjectId)
       .execute();

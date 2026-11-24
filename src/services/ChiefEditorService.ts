@@ -624,8 +624,7 @@ export class ChiefEditorService {
 
   /**
    * Импортирует вопросы, студентов и редакторов «как есть» из Google Sheets в SQLite.
-   * Предварительно очищает старые назначения по предмету, чтобы удалённые из таблицы
-   * студенты и редакторы гарантированно удалялись и из БД.
+   * Никогда не сбрасывает статус уже сданных или проверяемых билетов (`APPROVED`, `ON_CHECK`, `ON_REWORK`).
    */
   async importDataAsIsFromSheet(chiefEditorTelegramId: number, subjectId: number): Promise<void> {
     this.assertAdmin(chiefEditorTelegramId);
@@ -645,6 +644,9 @@ export class ChiefEditorService {
       const txEditorRepo = this.editorRepo.withTransaction(trx);
       const txUserRepo = this.userRepo.withTransaction(trx);
 
+      const existingTickets = await txTicketRepo.findBySubjectIdSorted(subjectId);
+      const oldTicketsMap = new Map(existingTickets.map((t) => [t.ticketNumber, t]));
+
       const oldRegs = await txRegRepo.findBySubjectId(subjectId);
       for (const reg of oldRegs) {
         await txRegRepo.remove(reg.telegramId, subjectId);
@@ -655,9 +657,6 @@ export class ChiefEditorService {
         await txEditorRepo.remove(ed.telegramId, subjectId);
       }
 
-      await txTicketRepo.clearStudentAssignmentsBySubject(subjectId);
-      await txTicketRepo.clearEditorAssignmentsBySubject(subjectId);
-
       const maxTicketNumber = sheetRows.length > 0
         ? Math.max(...sheetRows.map((r) => r.ticketNumber))
         : 0;
@@ -665,31 +664,46 @@ export class ChiefEditorService {
 
       const activeStudentIds = new Set<number>();
       const activeEditorIds = new Set<number>();
+      const processedNumbers = new Set<number>();
 
       for (const row of sheetRows) {
+        processedNumbers.add(row.ticketNumber);
+
         const studentId = row.studentFio ? nameToIdMap.get(row.studentFio.toLowerCase().trim()) : undefined;
         const editorId = row.editorFio ? nameToIdMap.get(row.editorFio.toLowerCase().trim()) : undefined;
 
-        const existingTicket = await txTicketRepo.findBySubjectAndNumber(subjectId, row.ticketNumber);
+        const oldTicket = oldTicketsMap.get(row.ticketNumber);
+
+        let nextStatus: TicketStatus | undefined = oldTicket?.status;
+        if (!nextStatus && studentId) {
+          nextStatus = TicketStatus.IN_PROGRESS;
+        }
 
         const patch = {
           question: row.question,
           studentId: studentId ?? undefined,
           editorId: editorId ?? undefined,
+          status: nextStatus,
           updatedAt: new Date().toISOString(),
         };
 
-        if (existingTicket) {
-          await txTicketRepo.update(existingTicket.ticketId, patch);
+        if (oldTicket) {
+          await txTicketRepo.update(oldTicket.ticketId, patch);
         } else {
           await txTicketRepo.insert({ subjectId, ticketNumber: row.ticketNumber, ...patch });
         }
 
-        if (studentId) {
-          activeStudentIds.add(studentId);
-        }
-        if (editorId) {
-          activeEditorIds.add(editorId);
+        if (studentId) activeStudentIds.add(studentId);
+        if (editorId) activeEditorIds.add(editorId);
+      }
+
+      for (const oldTicket of existingTickets) {
+        if (!processedNumbers.has(oldTicket.ticketNumber)) {
+          await txTicketRepo.update(oldTicket.ticketId, {
+            studentId: undefined,
+            editorId: undefined,
+            updatedAt: new Date().toISOString(),
+          });
         }
       }
 
@@ -946,6 +960,32 @@ export class ChiefEditorService {
       matched: Array.from(matchedMap.values()),
       missed,
     };
+  }
+
+  /**
+   * Вручную регистрирует нового пользователя в БД по Telegram ID и ФИО
+   * без привязки к предметам и без перераспределения билетов.
+   */
+  async addManualUser(
+    chiefEditorTelegramId: number,
+    targetTelegramId: number,
+    fullName: string
+  ): Promise<void> {
+    this.assertAdmin(chiefEditorTelegramId);
+
+    const existing = await this.userRepo.findById(targetTelegramId);
+    if (existing) {
+      throw new Error(`Пользователь с ID ${targetTelegramId} уже есть в базе (${existing.userName}).`);
+    }
+
+    await this.userRepo.insert({
+      telegramId: targetTelegramId,
+      userName: fullName.trim(),
+      registeredAt: new Date().toISOString(),
+      student: 0,
+      editor: 0,
+      chiefEditor: this.isAdmin(targetTelegramId) ? 1 : 0,
+    });
   }
 }
 
