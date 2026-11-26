@@ -1,15 +1,18 @@
 import { InlineKeyboard } from 'grammy';
+import { bot } from '../../../bot.js';
 import { BaseScreen, RenderResult } from '../../base.screen.js';
 import { MyContext } from '../../../types/context.js';
 import { ProcessStage } from '../../../types/entities.js';
 import { getDeadlinesText } from '../utils.js';
 import { stageManager } from '../../../managers/StageManager.js';
+import { messageManager } from '../../../managers/MessageManager.js';
 import { chiefEditorService } from '../../../services/ChiefEditorService.js';
 import { escapeMarkdown } from '../../../utils/format.js';
 import { AdminTickFilesScreen } from './admin-tick-files.screen.js';
 import { AdminTickBroadcastScreen } from './admin-tick-broadcast.screen.js';
 import { AdminTickSheetsScreen } from './admin-tick-sheets.screen.js';
 import { AdminTickAddUserScreen } from './admin-tick-add-user.screen.js';
+import { FeedbackScreen } from '../../feedback.screen.js';
 
 /**
  * Главный экран Администратора на этапах активной подготовки (`TICKETING`) и завершения (`FINISHED`).
@@ -51,11 +54,14 @@ export class AdminTicketingScreen implements BaseScreen {
       .text('📥 Скачать файлы билетов', 'tick_adm:files').row()
       .text('📢 Массовая рассылка (Спам)', 'tick_adm:broadcast').row()
       .text('📝 Синхронизация с таблицами', 'tick_adm:sheets').row()
-      .text('➕ Добавить участника', 'tick_adm:add_user').row();
+      .text('➕ Добавить участника', 'tick_adm:add_user').row()
+      .text('📥 Скачать журнал фидбека', 'admin_dl_feedback').row();
 
     if (!isFinished) {
-      keyboard.text('🏁 Завершить сессию (Закрыть приём)', 'tick_adm:finish');
+      keyboard.text('🏁 Завершить сессию (Закрыть приём)', 'tick_adm:finish').row();
     }
+
+    keyboard.text('💬 Обратная связь', 'open_feedback');
 
     return {
       displayType: 'main_menu',
@@ -86,6 +92,23 @@ export class AdminTicketingScreen implements BaseScreen {
         ctx.session.meta.notice = `❌ Ошибка завершения: ${e.message || e}`;
         return this;
       }
+    }
+
+    if (data === 'admin_dl_feedback') {
+      try {
+        const filePath = chiefEditorService.getFeedbackFilePath(ctx.from!.id);
+        await messageManager.sendMediaToOne(bot, ctx.from!.id, filePath);
+        ctx.session.meta.notice = '✅ Журнал обратной связи (`feedback.md`) отправлен в чат!';
+      } catch (e: any) {
+        ctx.session.meta.notice = `⚠️ ${e.message || e}`;
+      }
+      return this;
+    }
+
+    if (data === 'open_feedback') {
+      ctx.session.meta.fbReturnScreenId = this.id;
+      ctx.session.meta.fbRoleLabel = 'Администратор (/admin)';
+      return new FeedbackScreen();
     }
 
     return null;

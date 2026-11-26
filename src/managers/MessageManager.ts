@@ -406,6 +406,37 @@ export class MessageManager {
     }
   }
 
+  /**
+   * Рассылает 1 документ или альбом документов (до 10 штук) по их Telegram `file_id`
+   * с общей подписью списку пользователей.
+   */
+  public async broadcastTelegramDocsWithCaption(
+    bot: Bot<MyContext>,
+    userIds: number[],
+    fileIds: string[],
+    caption?: string
+  ): Promise<void> {
+    for (const userId of userIds) {
+      try {
+        if (fileIds.length === 1) {
+          await bot.api.sendDocument(userId, fileIds[0], {
+            ...(caption ? { caption, parse_mode: 'Markdown' } : {}),
+          });
+        } else if (fileIds.length > 1) {
+          const mediaGroup = fileIds.slice(0, 10).map((id, idx, arr) => ({
+            type: 'document' as const,
+            media: id,
+            ...(caption && idx === arr.length - 1 ? { caption, parse_mode: 'Markdown' as const } : {}),
+          }));
+          await bot.api.sendMediaGroup(userId, mediaGroup);
+        }
+      } catch (error) {
+        console.error(`MessageManager: Ошибка отправки вложений рассылки пользователю ${userId}:`, error);
+      }
+      await new Promise((resolve) => setTimeout(resolve, config.delayMs));
+    }
+  }
+
   // =========================================================================
   // ВСПОМОГАТЕЛЬНЫЕ ПРИВАТНЫЕ МЕТОДЫ
   // =========================================================================

@@ -65,11 +65,11 @@ export class StudentTicketSubmitScreen implements BaseScreen {
           return this;
         }
 
+        const ext = ticketFileStorage.validateFileExtension(doc.file_name);
+
         const tickets = await studentService.getTicketsForStudent(ctx.from!.id);
         const currentTicket = tickets.find((t) => t.ticketId === ticketId);
         if (!currentTicket) throw new Error('Билет не найден');
-
-        const ext = doc.file_name ? doc.file_name.slice(doc.file_name.lastIndexOf('.')) : '.bin';
 
         const res = await studentService.submitTicketById(
           ctx.from!.id,

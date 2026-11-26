@@ -1,5 +1,7 @@
 import { BaseScreen } from './base.screen.js';
 
+import { FeedbackScreen } from './feedback.screen.js';
+
 import { AdminPreparationScreen } from './admin/preparation/admin-preparation.screen.js';
 import { AdminPrepDateInputScreen } from './admin/preparation/admin-prep-date-input.screen.js';
 import { AdminPrepLoadSubjectsScreen } from './admin/preparation/admin-prep-load-subjects.screen.js';
@@ -39,6 +41,9 @@ import { EditorTicketReviewScreen } from './editor/ticketing/editor-ticket-revie
  */
 export class ScreenFactory {
   private readonly registry: Record<string, new () => BaseScreen> = {
+    // Обратная связь
+    feedback_input: FeedbackScreen,
+
     // Экраны Администратора: Подготовка
     admin_preparation: AdminPreparationScreen,
     admin_prep_date_input: AdminPrepDateInputScreen,

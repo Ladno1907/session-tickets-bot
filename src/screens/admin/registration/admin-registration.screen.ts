@@ -6,6 +6,7 @@ import { chiefEditorService } from '../../../services/ChiefEditorService.js';
 import { AdminRegSelectSubjectScreen } from './admin-reg-select-subject.screen.js';
 import { AdminDistributionScreen } from '../distribution/admin-distribution.screen.js';
 import { escapeMarkdown } from '../../../utils/format.js';
+import { FeedbackScreen } from '../../feedback.screen.js';
 
 /**
  * Главный экран Администратора на этапе регистрации (`REGISTRATION`).
@@ -39,7 +40,8 @@ export class AdminRegistrationScreen implements BaseScreen {
       .text('👑 Список редакторов', 'reg_view_all_editors')
       .text('🔑 Изменить редакторов', 'reg_sub_action:manage_editors').row()
       .text('📝 Изменить предметы', 'reg_sub_action:manage_subjects').row()
-      .text('🛑 Закрыть регистрацию и начать распределение', 'stop_registration');
+      .text('🛑 Закрыть регистрацию и начать распределение', 'stop_registration').row()
+      .text('💬 Обратная связь', 'open_feedback');
 
     return {
       displayType: 'main_menu',
@@ -114,6 +116,12 @@ export class AdminRegistrationScreen implements BaseScreen {
         ctx.session.meta.notice = `❌ Ошибка перехода: ${error.message || error}`;
         return this;
       }
+    }
+
+    if (data === 'open_feedback') {
+      ctx.session.meta.fbReturnScreenId = this.id;
+      ctx.session.meta.fbRoleLabel = 'Администратор (/admin)';
+      return new FeedbackScreen();
     }
 
     return null;

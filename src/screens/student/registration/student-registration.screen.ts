@@ -4,6 +4,7 @@ import { MyContext } from '../../../types/context.js';
 import { studentService } from '../../../services/StudentService.js';
 import { StudentRegSubjectSelectionScreen } from './student-reg-subject-selection.screen.js';
 import { escapeMarkdown } from '../../../utils/format.js';
+import { FeedbackScreen } from '../../feedback.screen.js';
 
 /**
  * Главный экран личного кабинета Студента на этапе регистрации (`REGISTRATION`).
@@ -55,7 +56,8 @@ export class StudentRegistrationScreen implements BaseScreen {
     const keyboard = new InlineKeyboard()
       .text('✏️ Изменить предметы подготовки', 'select_type:student').row()
       .text('👑 Изменить заявки в редакторы', 'select_type:editor').row()
-      .text('🔄 Обновить меню', 'refresh_user_menu');
+      .text('🔄 Обновить меню', 'refresh_user_menu').row()
+      .text('💬 Обратная связь', 'open_feedback');
 
     return {
       displayType: 'main_menu',
@@ -86,6 +88,12 @@ export class StudentRegistrationScreen implements BaseScreen {
 
       ctx.session.meta.selectedSubjectIds = current.map((s) => s.id);
       return new StudentRegSubjectSelectionScreen();
+    }
+
+    if (data === 'open_feedback') {
+      ctx.session.meta.fbReturnScreenId = this.id;
+      ctx.session.meta.fbRoleLabel = 'Студент (/user)';
+      return new FeedbackScreen();
     }
 
     return null;

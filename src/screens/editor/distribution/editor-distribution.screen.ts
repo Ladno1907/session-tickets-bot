@@ -1,5 +1,7 @@
+import { InlineKeyboard } from 'grammy';
 import { BaseScreen, RenderResult } from '../../base.screen.js';
 import { MyContext } from '../../../types/context.js';
+import { FeedbackScreen } from '../../feedback.screen.js';
 
 /**
  * Информационный экран Редактора на этапе перепроверки распределения (`DISTRIBUTION`).
@@ -19,10 +21,23 @@ export class EditorDistributionScreen implements BaseScreen {
     return {
       displayType: 'main_menu',
       text,
+      reply_markup: new InlineKeyboard().text('💬 Обратная связь', 'open_feedback'),
     };
   }
 
-  async handle(_: MyContext): Promise<BaseScreen | null> {
+  
+  async handle(ctx: MyContext): Promise<BaseScreen | null> {
+    const data = ctx.callbackQuery?.data;
+    if (!data) return null;
+
+    await ctx.answerCallbackQuery();
+
+    if (data === 'open_feedback') {
+      ctx.session.meta.fbReturnScreenId = this.id;
+      ctx.session.meta.fbRoleLabel = 'Редактор (/editor)';
+      return new FeedbackScreen();
+    }
+
     return null;
   }
 }

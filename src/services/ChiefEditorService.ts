@@ -17,6 +17,7 @@ import { editorRequestRepository } from '../database/repositories/EditorRequestR
 import { ticketSheetRepository } from '../database/sheetRepositories/TicketSheetRepository.js';
 import { registrationRepository } from '../database/repositories/RegistrationRepo.js';
 import { ticketFileStorage } from '../storage/TicketFileStorage.js';
+import { feedbackStorage } from '../storage/FeedbackStorage.js';
 
 /**
  * Сервис бизнес-логики Главного Редактора (Администратора сессии).
@@ -986,6 +987,20 @@ export class ChiefEditorService {
       editor: 0,
       chiefEditor: this.isAdmin(targetTelegramId) ? 1 : 0,
     });
+  }
+
+  /**
+   * Возвращает путь к файлу журнала обратной связи (`./data/feedback.md`), если он существует.
+   */
+  getFeedbackFilePath(chiefEditorTelegramId: number): string {
+    this.assertAdmin(chiefEditorTelegramId);
+
+    const filePath = feedbackStorage.getFilePath();
+    if (!existsSync(filePath)) {
+      throw new Error('Журнал обратной связи пока пуст (обращений ещё не было).');
+    }
+
+    return filePath;
   }
 }
 

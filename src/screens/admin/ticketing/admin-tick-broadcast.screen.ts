@@ -15,9 +15,21 @@ type BroadcastMode =
   | 'editors_by_sub'
   | 'by_fio';
 
+type BroadcastStep =
+  | 'select_mode'
+  | 'select_subjects'
+  | 'select_fio'
+  | 'attach_files'
+  | 'input_text';
+
+interface AttachedDoc {
+  fileId: string;
+  fileName: string;
+}
+
 /**
- * Экран массовой рассылки объявлений администратора с гибкими фильтрами:
- * всем, студентам, редакторам, по выбранным предметам или выборочно по ФИО.
+ * Экран массовой рассылки объявлений администратора с гибкими фильтрами
+ * и поддержкой прикрепления до 10 документов (альбомом).
  */
 export class AdminTickBroadcastScreen implements BaseScreen {
   readonly id = 'admin_tick_broadcast';
@@ -26,7 +38,7 @@ export class AdminTickBroadcastScreen implements BaseScreen {
     if (!ctx.from) throw new Error('Пользователь не найден.');
 
     const mode = ctx.session.meta?.bcMode as BroadcastMode | undefined;
-    const step = (ctx.session.meta?.bcStep as 'select_mode' | 'select_subjects' | 'select_fio' | 'input_text') || 'select_mode';
+    const step = (ctx.session.meta?.bcStep as BroadcastStep) || 'select_mode';
 
     const keyboard = new InlineKeyboard();
     let text = `📢 *Массовая рассылка сообщений*\n\n`;
@@ -41,9 +53,7 @@ export class AdminTickBroadcastScreen implements BaseScreen {
         .text('👑 Редакторам по предмету(-ам)', 'bc_mode:editors_by_sub').row()
         .text('👤 Выборочно по ФИ', 'bc_mode:by_fio').row()
         .text('⬅️ Отмена', 'bc_act:cancel');
-    }
-
-    else if (step === 'select_subjects') {
+    } else if (step === 'select_subjects') {
       const selectedIds: number[] = ctx.session.meta?.bcSubjectIds || [];
       const subjects = await chiefEditorService.getAllSubjects(ctx.from.id);
       const roleTitle = mode === 'students_by_sub' ? 'студентов' : 'редакторов';
@@ -60,9 +70,7 @@ export class AdminTickBroadcastScreen implements BaseScreen {
         keyboard.text(`➡️ Далее (выбрано: ${selectedIds.length})`, 'bc_act:subjects_done').row();
       }
       keyboard.text('⬅️ Назад', 'bc_act:reset');
-    }
-
-    else if (step === 'select_fio') {
+    } else if (step === 'select_fio') {
       const users = await chiefEditorService.getAllRegisteredUsers(ctx.from.id);
       text += `👤 *Выборочная рассылка по ФИ*\n\n` +
               `Введите *номера из списка* или *Фамилии / Имена* через запятую:\n\n`;
@@ -72,18 +80,54 @@ export class AdminTickBroadcastScreen implements BaseScreen {
       } else {
         const listLines = users.map((u, idx) => `${idx + 1}. ${escapeMarkdown(u.name)}`);
         const joined = listLines.join('\n');
-        text += joined.length > 3200 ? joined.slice(0, 3200) + '\n_...список обрезан, используйте поиск по фамилии_' : joined;
+        text += joined.length > 3200
+          ? joined.slice(0, 3200) + '\n_...список обрезан, используйте поиск по фамилии_'
+          : joined;
       }
 
       keyboard.text('⬅️ Назад', 'bc_act:reset');
-    }
-
-    else if (step === 'input_text') {
+    } else if (step === 'attach_files') {
       const recipients: number[] = ctx.session.meta?.bcRecipients || [];
-      text += `✏️ *Ввод текста объявления*\n\n` +
-              `🎯 Найдено получателей: *${recipients.length}*\n\n` +
-              `Отправьте следующим текстовым сообщением текст объявления — бот разошлёт его выбранным участникам:`;
+      const docs: AttachedDoc[] = ctx.session.meta?.bcDocs || [];
+
+      text += `📎 *Прикрепление файлов (необязательно)*\n\n` +
+              `🎯 Получателей: *${recipients.length}*\n` +
+              `📁 Прикреплено файлов: *${docs.length}/10*\n\n`;
+
+      if (docs.length > 0) {
+        text += docs.map((d, i) => `${i + 1}. \`${escapeMarkdown(d.fileName)}\``).join('\n') + '\n\n';
+      }
+
+      text += docs.length < 10
+        ? `Отправьте *файл (документ)* в этот чат (можно кидать по одному или сразу пачкой), либо нажмите кнопку ниже:`
+        : `Достигнут лимит в 10 файлов на один альбом. Нажмите «Далее к тексту»:`;
+
+      if (docs.length > 0) {
+        keyboard
+          .text(`➡️ Далее к тексту (${docs.length} файл.)`, 'bc_act:files_done').row()
+          .text('🗑 Очистить файлы', 'bc_act:clear_files').row();
+      } else {
+        keyboard.text('⏭ Пропустить (только текст)', 'bc_act:files_done').row();
+      }
       keyboard.text('❌ Отмена', 'bc_act:cancel');
+    } else if (step === 'input_text') {
+      const recipients: number[] = ctx.session.meta?.bcRecipients || [];
+      const docs: AttachedDoc[] = ctx.session.meta?.bcDocs || [];
+
+      text += `✏️ *Ввод текста объявления*\n\n` +
+              `🎯 Получателей: *${recipients.length}*\n` +
+              `📎 Прикреплено файлов: *${docs.length}*\n\n`;
+
+      if (docs.length > 0) {
+        text += `Отправьте текстовое сообщение для рассылки (оно станет подписью к файлам) или нажмите «Отправить без текста»:`;
+        keyboard.text('📤 Отправить только файлы (без текста)', 'bc_act:send_only_files').row();
+      } else {
+        text += `Отправьте следующим текстовым сообщением текст объявления — бот разошлёт его выбранным участникам:`;
+      }
+
+      keyboard
+        .text('📎 Изменить файлы', 'bc_act:back_to_files').row()
+        .text('❌ Отмена', 'bc_act:cancel');
     }
 
     if (notice) {
@@ -100,6 +144,7 @@ export class AdminTickBroadcastScreen implements BaseScreen {
   async handle(ctx: MyContext): Promise<BaseScreen | null> {
     if (!ctx.from) return null;
 
+    // 1. Обработка кнопок
     if (ctx.callbackQuery?.data) {
       const data = ctx.callbackQuery.data;
       await ctx.answerCallbackQuery();
@@ -120,7 +165,8 @@ export class AdminTickBroadcastScreen implements BaseScreen {
 
         if (mode === 'all' || mode === 'students' || mode === 'editors') {
           ctx.session.meta.bcRecipients = await chiefEditorService.getBroadcastRecipientIds(ctx.from.id, mode);
-          ctx.session.meta.bcStep = 'input_text';
+          ctx.session.meta.bcDocs = [];
+          ctx.session.meta.bcStep = 'attach_files';
           return this;
         }
 
@@ -158,12 +204,33 @@ export class AdminTickBroadcastScreen implements BaseScreen {
         }
 
         ctx.session.meta.bcRecipients = recipients;
+        ctx.session.meta.bcDocs = [];
+        ctx.session.meta.bcStep = 'attach_files';
+        return this;
+      }
+
+      if (data === 'bc_act:clear_files') {
+        ctx.session.meta.bcDocs = [];
+        return this;
+      }
+
+      if (data === 'bc_act:files_done') {
         ctx.session.meta.bcStep = 'input_text';
         return this;
       }
+
+      if (data === 'bc_act:back_to_files') {
+        ctx.session.meta.bcStep = 'attach_files';
+        return this;
+      }
+
+      if (data === 'bc_act:send_only_files') {
+        return this.executeBroadcast(ctx);
+      }
     }
 
-    const step = ctx.session.meta?.bcStep;
+    // 2. Обработка входящих сообщений в зависимости от шага
+    const step = ctx.session.meta?.bcStep as BroadcastStep | undefined;
 
     if (step === 'select_fio' && ctx.message?.text) {
       const { matched, missed } = await chiefEditorService.resolveBroadcastUsersByQuery(
@@ -177,7 +244,8 @@ export class AdminTickBroadcastScreen implements BaseScreen {
       }
 
       ctx.session.meta.bcRecipients = matched.map((m) => m.telegramId);
-      ctx.session.meta.bcStep = 'input_text';
+      ctx.session.meta.bcDocs = [];
+      ctx.session.meta.bcStep = 'attach_files';
 
       const namesList = matched.map((m) => escapeMarkdown(m.name)).join(', ');
       let info = `✅ Выбраны: *${namesList}*`;
@@ -188,30 +256,66 @@ export class AdminTickBroadcastScreen implements BaseScreen {
       return this;
     }
 
-    if (step === 'input_text' && ctx.message?.text) {
-      const msgText = ctx.message.text.trim();
-      const recipients: number[] = ctx.session.meta?.bcRecipients || [];
+    if (step === 'attach_files') {
+      if (ctx.message?.document) {
+        const docs: AttachedDoc[] = ctx.session.meta.bcDocs || [];
+        if (docs.length >= 10) {
+          ctx.session.meta.notice = '⚠️ Максимум 10 файлов в одном альбоме! Нажмите «Далее к тексту».';
+          return this;
+        }
 
-      if (!msgText) return this;
+        const doc = ctx.message.document;
+        docs.push({
+          fileId: doc.file_id,
+          fileName: doc.file_name || `document_${docs.length + 1}`,
+        });
+        ctx.session.meta.bcDocs = docs;
+        return this;
+      }
 
-      try {
-        await messageManager.broadcastTextToUsers(
-          bot,
-          recipients,
-          `📢 *Объявление от администратора:*\n\n${msgText}`
-        );
-
-        this.cleanupSession(ctx);
-        ctx.session.meta.notice = `✅ Рассылка успешно отправлена *${recipients.length}* получателям!`;
-        return new AdminTicketingScreen();
-      } catch (e: any) {
-        this.cleanupSession(ctx);
-        ctx.session.meta.notice = `❌ Ошибка рассылки: ${e.message || e}`;
-        return new AdminTicketingScreen();
+      if (ctx.message) {
+        ctx.session.meta.notice = '⚠️ На этом шаге нужно отправить файл (документ) или нажать кнопку на клавиатуре.';
+        return this;
       }
     }
 
+    if (step === 'input_text' && ctx.message?.text) {
+      const msgText = ctx.message.text.trim();
+      if (!msgText) return this;
+      return this.executeBroadcast(ctx, msgText);
+    }
+
     return null;
+  }
+
+  private async executeBroadcast(ctx: MyContext, rawText?: string): Promise<BaseScreen> {
+    const recipients: number[] = ctx.session.meta?.bcRecipients || [];
+    const docs: AttachedDoc[] = ctx.session.meta?.bcDocs || [];
+    const formattedText = rawText ? `📢 *Объявление от администратора:*\n\n${rawText}` : undefined;
+
+    try {
+      if (docs.length > 0) {
+        const fileIds = docs.map((d) => d.fileId);
+        if (formattedText && formattedText.length <= 1024) {
+          await messageManager.broadcastTelegramDocsWithCaption(bot, recipients, fileIds, formattedText);
+        } else {
+          await messageManager.broadcastTelegramDocsWithCaption(bot, recipients, fileIds);
+          if (formattedText) {
+            await messageManager.broadcastTextToUsers(bot, recipients, formattedText);
+          }
+        }
+      } else if (formattedText) {
+        await messageManager.broadcastTextToUsers(bot, recipients, formattedText);
+      }
+
+      this.cleanupSession(ctx);
+      ctx.session.meta.notice = `✅ Рассылка успешно отправлена *${recipients.length}* получателям (файлов: ${docs.length})!`;
+      return new AdminTicketingScreen();
+    } catch (e: any) {
+      this.cleanupSession(ctx);
+      ctx.session.meta.notice = `❌ Ошибка рассылки: ${e.message || e}`;
+      return new AdminTicketingScreen();
+    }
   }
 
   private cleanupSession(ctx: MyContext): void {
@@ -219,6 +323,6 @@ export class AdminTickBroadcastScreen implements BaseScreen {
     delete ctx.session.meta.bcStep;
     delete ctx.session.meta.bcSubjectIds;
     delete ctx.session.meta.bcRecipients;
+    delete ctx.session.meta.bcDocs;
   }
 }
-

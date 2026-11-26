@@ -48,9 +48,10 @@ export function paginateItems<T>(
 
   const totalPages = pages.length;
   let page = Number(ctx.session.meta?.[pageKey] ?? 0);
-  if (isNaN(page) || page < 0) page = 0;
-  if (page >= totalPages) page = totalPages - 1;
+  if (isNaN(page)) page = 0;
 
+  // Зацикливание индекса страницы (Loop)
+  page = ((page % totalPages) + totalPages) % totalPages;
   ctx.session.meta[pageKey] = page;
 
   return {
@@ -61,7 +62,8 @@ export function paginateItems<T>(
 }
 
 /**
- * Добавляет в инлайн-клавиатуру ряд кнопок навигации (`⬅️ | 1 / N | ➡️`), если страниц больше одной.
+ * Добавляет в инлайн-клавиатуру зацикленный ряд кнопок навигации (`⬅️ Пред. | 📄 1 / N | След. ➡️`),
+ * если страниц больше одной.
  */
 export function appendPaginationButtons(
   keyboard: InlineKeyboard,
@@ -71,20 +73,13 @@ export function appendPaginationButtons(
 ): void {
   if (totalPages <= 1) return;
 
-  if (page > 0) {
-    keyboard.text('⬅️', `${prefix}:${page - 1}`);
-  } else {
-    keyboard.text('·', 'noop');
-  }
+  const prevPage = (page - 1 + totalPages) % totalPages;
+  const nextPage = (page + 1) % totalPages;
 
-  keyboard.text(`${page + 1} / ${totalPages}`, 'noop');
-
-  if (page < totalPages - 1) {
-    keyboard.text('➡️', `${prefix}:${page + 1}`);
-  } else {
-    keyboard.text('·', 'noop');
-  }
-
-  keyboard.row();
+  keyboard
+    .text('⬅️ Пред.', `${prefix}:${prevPage}`)
+    .text(`📄 ${page + 1} / ${totalPages}`, 'noop')
+    .text('След. ➡️', `${prefix}:${nextPage}`)
+    .row();
 }
 

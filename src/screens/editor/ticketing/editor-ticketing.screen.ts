@@ -7,6 +7,7 @@ import { stageManager } from '../../../managers/StageManager.js';
 import { EditorTicketReviewScreen } from './editor-ticket-review.screen.js';
 import { paginateItems, appendPaginationButtons } from '../../pagination.js';
 import { escapeMarkdown } from '../../../utils/format.js';
+import { FeedbackScreen } from '../../feedback.screen.js';
 
 /**
  * Главный экран очереди проверки Редактора на этапах `TICKETING` и `FINISHED`.
@@ -105,7 +106,8 @@ export class EditorTicketingScreen implements BaseScreen {
 
     if (notice) text += `\n\n${notice}`;
 
-    keyboard.text('🔄 Обновить очередь', 'ed_tick:refresh');
+    keyboard.text('🔄 Обновить очередь', 'ed_tick:refresh').row()
+            .text('💬 Обратная связь', 'open_feedback');
 
     return {
       displayType: 'main_menu',
@@ -134,6 +136,12 @@ export class EditorTicketingScreen implements BaseScreen {
       ctx.session.meta.reviewTicketId = ticketId;
       delete ctx.session.meta.edActionMode;
       return new EditorTicketReviewScreen();
+    }
+
+    if (data === 'open_feedback') {
+      ctx.session.meta.fbReturnScreenId = this.id;
+      ctx.session.meta.fbRoleLabel = 'Редактор (/editor)';
+      return new FeedbackScreen();
     }
 
     return null;

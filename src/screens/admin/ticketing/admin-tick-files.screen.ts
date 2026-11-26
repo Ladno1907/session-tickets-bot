@@ -2,6 +2,8 @@ import { InlineKeyboard } from 'grammy';
 import { BaseScreen, RenderResult } from '../../base.screen.js';
 import { MyContext } from '../../../types/context.js';
 import { bot } from '../../../bot.js';
+import { unlink } from 'node:fs/promises';
+import { ticketFileStorage } from '../../../storage/TicketFileStorage.js';
 import { messageManager } from '../../../managers/MessageManager.js';
 import { chiefEditorService } from '../../../services/ChiefEditorService.js';
 import { escapeMarkdown } from '../../../utils/format.js';
@@ -45,8 +47,9 @@ export class AdminTickFilesScreen implements BaseScreen {
     }
 
     if (currentSub) {
-      keyboard.text('🟢 Скачать только ПРИНЯТЫЕ', 'files_dl:approved').row()
-              .text('📦 Скачать ВСЕ загруженные', 'files_dl:all').row();
+      keyboard.text('🟢 Скачать только ПРИНЯТЫЕ (альбомом)', 'files_dl:approved').row()
+              .text('📦 Скачать ВСЕ загруженные (альбомом)', 'files_dl:all').row()
+              .text('🗜 Скачать ПРИНЯТЫЕ единым ZIP-архивом', 'files_dl:zip_approved').row();
     }
 
     keyboard.text('⬅️ Назад в панель', 'files_dl:back');
@@ -99,6 +102,34 @@ export class AdminTickFilesScreen implements BaseScreen {
         return this;
       } catch (e: any) {
         ctx.session.meta.notice = `❌ Ошибка выгрузки: ${e.message || e}`;
+        return this;
+      }
+    }
+
+     if (data === 'files_dl:zip_approved') {
+      const subjectId = ctx.session.meta?.filesSubjectId;
+      if (!subjectId || !ctx.from) return this;
+
+      try {
+        const { subjectName, files } = await chiefEditorService.getTicketFilesForSubject(
+          ctx.from.id,
+          subjectId,
+          true
+        );
+
+        if (files.length === 0) {
+          ctx.session.meta.notice = `⚠️ По предмету «${escapeMarkdown(subjectName)}» принятых файлов на диске не найдено.`;
+          return this;
+        }
+
+        const zipPath = await ticketFileStorage.createSubjectZipArchive(subjectName, files, 'Принятые');
+        await messageManager.sendMediaToOne(bot, ctx.from.id, zipPath);
+        await unlink(zipPath).catch(() => {});
+
+        ctx.session.meta.notice = `✅ Единый ZIP-архив по предмету «${escapeMarkdown(subjectName)}» отправлен (внутри *${files.length}* билетов)!`;
+        return this;
+      } catch (e: any) {
+        ctx.session.meta.notice = `❌ Ошибка создания архива: ${e.message || e}`;
         return this;
       }
     }

@@ -69,5 +69,12 @@ export const config = {
     .filter((id) => id !== '')
     .map((id) => parseInt(id, 10))
     .filter((id) => !isNaN(id)),
+
+  /** Белый список разрешённых расширений файлов решений (в нижнем регистре с точкой). */
+  allowedExtensions: (process.env.ALLOWED_EXTENSIONS || '.pdf,.docx,.doc,.md,.txt,.tex')
+    .split(',')
+    .map((ext) => ext.trim().toLowerCase())
+    .filter((ext) => ext.length > 0)
+    .map((ext) => (ext.startsWith('.') ? ext : `.${ext}`)),
 } as const;
 

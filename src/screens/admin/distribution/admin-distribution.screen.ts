@@ -6,6 +6,7 @@ import { chiefEditorService } from '../../../services/ChiefEditorService.js';
 import { AdminDistStatsScreen } from './admin-dist-stats.screen.js';
 import { AdminDistSubjectsScreen } from './admin-dist-subjects.screen.js';
 import { AdminTicketingScreen } from '../ticketing/admin-ticketing.screen.js';
+import { FeedbackScreen } from '../../feedback.screen.js';
 
 /**
  * Главный экран Администратора на этапе проверки распределения (`DISTRIBUTION`).
@@ -30,7 +31,8 @@ export class AdminDistributionScreen implements BaseScreen {
     const keyboard = new InlineKeyboard()
       .text('📊 Подробная статистика', 'dist_menu:stats').row()
       .text('📝 Синхронизация с таблицами', 'dist_menu:subjects').row()
-      .text('🚀 Запустить этап Сдачи (Ticketing)', 'dist_menu:start_ticketing');
+      .text('🚀 Запустить этап Сдачи (Ticketing)', 'dist_menu:start_ticketing').row()
+      .text('💬 Обратная связь', 'open_feedback');
 
     return {
       displayType: 'main_menu',
@@ -63,6 +65,12 @@ export class AdminDistributionScreen implements BaseScreen {
         ctx.session.meta.notice = `❌ Ошибка перехода: ${e.message || e}`;
         return this;
       }
+    }
+
+    if (data === 'open_feedback') {
+      ctx.session.meta.fbReturnScreenId = this.id;
+      ctx.session.meta.fbRoleLabel = 'Администратор (/admin)';
+      return new FeedbackScreen();
     }
 
     return null;

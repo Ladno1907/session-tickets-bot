@@ -8,6 +8,7 @@ import { AdminPrepLoadSubjectsScreen } from './admin-prep-load-subjects.screen.j
 import { AdminPrepDeleteSubjectScreen } from './admin-prep-delete-subject.screen.js';
 import { AdminRegistrationScreen } from '../registration/admin-registration.screen.js';
 import { chiefEditorService } from '../../../services/ChiefEditorService.js';
+import { FeedbackScreen } from '../../feedback.screen.js';
 
 /**
  * Главный экран Администратора на подготовительном этапе (`PREPARATION`).
@@ -39,7 +40,8 @@ export class AdminPreparationScreen implements BaseScreen {
       .text('📅 Дедлайн подготовки', 'set_tick_end').row()
       .text('📚 Загрузить предметы', 'load_subjects').row()
       .text('🗑 Удалить предмет', 'go_to_delete_subject').row()
-      .text('🚀 Запустить регистрацию', 'confirm_deadlines');
+      .text('🚀 Запустить регистрацию', 'confirm_deadlines').row()
+      .text('💬 Обратная связь', 'open_feedback');
 
     return {
       displayType: 'main_menu',
@@ -79,6 +81,12 @@ export class AdminPreparationScreen implements BaseScreen {
         ctx.session.meta.notice = `❌ Ошибка: ${error.message || error}`;
         return this;
       }
+    }
+
+    if (data === 'open_feedback') {
+      ctx.session.meta.fbReturnScreenId = this.id;
+      ctx.session.meta.fbRoleLabel = 'Администратор (/admin)';
+      return new FeedbackScreen();
     }
 
     return null;

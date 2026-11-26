@@ -37,7 +37,6 @@ export class EditorTicketReviewScreen implements BaseScreen {
       };
     }
 
-    // Режим ввода комментария при отправке на доработку
     if (mode === 'rework') {
       let text = `✏️ *Отправка на доработку — Билет №${ticket.ticketNumber}* (${escapeMarkdown(ticket.subjectName)})\n\n` +
                  `Напишите текстовым сообщением, что нужно исправить студенту:`;
@@ -50,7 +49,6 @@ export class EditorTicketReviewScreen implements BaseScreen {
       };
     }
 
-    // Режим загрузки нового файла редактором
     if (mode === 'replace') {
       let text = `📤 *Замена файла — Билет №${ticket.ticketNumber}* (${escapeMarkdown(ticket.subjectName)})\n\n` +
                  `Отправьте новый *файл (документ)* в этот чат:`;
@@ -63,7 +61,6 @@ export class EditorTicketReviewScreen implements BaseScreen {
       };
     }
 
-    // Основной режим просмотра карточки билета
     const statusText = ticket.status === TicketStatus.APPROVED ? '🟢 Принят' : '🟡 На проверке';
     let text = `🎫 *Билет №${ticket.ticketNumber}* (${escapeMarkdown(ticket.subjectName)})\n\n` +
                `❓ *Вопрос:* ${escapeMarkdown(ticket.question)}\n` +
@@ -88,7 +85,6 @@ export class EditorTicketReviewScreen implements BaseScreen {
       );
       if (existsSync(candidatePath)) {
         documentPath = candidatePath;
-        // Лимит подписи к документу в Telegram API — 1024 символа
         if (text.length > 1000) {
           text = text.slice(0, 997) + '...';
         }
@@ -118,7 +114,6 @@ export class EditorTicketReviewScreen implements BaseScreen {
     const ticketId = ctx.session.meta?.reviewTicketId;
     const mode = ctx.session.meta?.edActionMode as 'rework' | 'replace' | undefined;
 
-    // 1. Обработка инлайн-кнопок
     if (ctx.callbackQuery?.data) {
       const data = ctx.callbackQuery.data;
       await ctx.answerCallbackQuery();
@@ -167,7 +162,6 @@ export class EditorTicketReviewScreen implements BaseScreen {
       }
     }
 
-    // 2. Ввод комментария для отправки на доработку
     if (mode === 'rework' && ctx.message?.text && ticketId) {
       const comment = ctx.message.text.trim();
       try {
@@ -191,11 +185,10 @@ export class EditorTicketReviewScreen implements BaseScreen {
       }
     }
 
-    // 3. Загрузка нового документа при замене файла редактором
     if (mode === 'replace' && ctx.message?.document && ticketId) {
       try {
         const doc = ctx.message.document;
-        const ext = doc.file_name ? doc.file_name.slice(doc.file_name.lastIndexOf('.')) : '.bin';
+        const ext = ticketFileStorage.validateFileExtension(doc.file_name);
 
         const ticketView = await editorService.getTicket(ctx.from!.id, ticketId);
         if (!ticketView) throw new Error('Билет не найден');
@@ -217,6 +210,11 @@ export class EditorTicketReviewScreen implements BaseScreen {
         delete ctx.session.meta.edActionMode;
         return this;
       }
+    }
+
+    if (mode === 'replace' && ctx.message) {
+      ctx.session.meta.notice = '⚠️ Пожалуйста, отправьте новый файл именно как *документ* (не текстом, не фото и не голосовым).';
+      return this;
     }
 
     return null;
