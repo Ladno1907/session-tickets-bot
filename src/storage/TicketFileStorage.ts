@@ -1,7 +1,7 @@
 import { mkdir } from 'node:fs/promises';
-import { createWriteStream } from 'node:fs';
+import { createWriteStream, existsSync } from 'node:fs';
 import { join, extname, basename } from 'node:path';
-import * as archiver from 'archiver';
+import { ZipArchive } from 'archiver';
 import { config } from '../config.js';
 import { MyApi } from '../types/context.js';
 
@@ -13,10 +13,6 @@ export class TicketFileStorage {
   // ВАЛИДАЦИЯ ФОРМАТОВ ФАЙЛОВ (WHITELIST)
   // =========================================================================
 
-  /**
-   * Проверяет расширение загружаемого документа по белому списку `config.allowedExtensions`.
-   * Возвращает нормализованное расширение (например, `.pdf`) или выбрасывает ошибку.
-   */
   public validateFileExtension(fileName?: string): string {
     const ext = fileName ? extname(fileName).toLowerCase() : '';
     const allowed = config.allowedExtensions;
@@ -93,8 +89,7 @@ export class TicketFileStorage {
 
     await new Promise<void>((resolve, reject) => {
       const output = createWriteStream(zipPath);
-      const createArchiver = (archiver as any).default ?? archiver;
-      const archive = createArchiver('zip', { zlib: { level: 9 } });
+      const archive = new ZipArchive({ zlib: { level: 9 } });
 
       output.on('close', () => resolve());
       archive.on('error', (err: Error) => reject(err));
@@ -103,6 +98,42 @@ export class TicketFileStorage {
 
       for (const f of files) {
         archive.file(f.filePath, { name: basename(f.filePath) });
+      }
+
+      archive.finalize();
+    });
+
+    return zipPath;
+  }
+
+  /**
+   * Собирает полный резервный ZIP-архив системы: файл базы данных SQLite
+   * и всю директорию `data/` (кроме временной папки `data/archives`).
+   */
+  public async createFullBackupArchive(): Promise<string> {
+    await mkdir(this.archiveDir, { recursive: true });
+
+    const dataDir = join(process.cwd(), 'data');
+    const zipPath = join(this.archiveDir, `backup_${new Date().toISOString().slice(0, 10)}_${Date.now()}.zip`);
+
+    await new Promise<void>((resolve, reject) => {
+      const output = createWriteStream(zipPath);
+      const archive = new ZipArchive({ zlib: { level: 9 } });
+
+      output.on('close', () => resolve());
+      archive.on('error', (err: Error) => reject(err));
+
+      archive.pipe(output);
+
+      if (existsSync(config.db.path)) {
+        archive.file(config.db.path, { name: basename(config.db.path) });
+      }
+
+      if (existsSync(dataDir)) {
+        archive.glob('**/*', {
+          cwd: dataDir,
+          ignore: ['archives/**'],
+        }, { prefix: 'data' });
       }
 
       archive.finalize();

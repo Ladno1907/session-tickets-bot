@@ -29,6 +29,7 @@ export interface User {
   student: 0 | 1;
   editor: 0 | 1;
   chiefEditor: 0 | 1;
+  missedDeadlines: number;
 }
 
 export interface Subject {
@@ -80,3 +81,9 @@ export interface UserMainMenuState {
   lastUpdated: string;
 }
 
+export interface Checkpoint {
+  checkpointId: number;
+  deadlineAt: string;
+  remindedAt?: string;
+  processedAt?: string;
+}

@@ -126,6 +126,24 @@ export async function migrate(): Promise<void> {
     .addColumn('last_updated', 'text', (col) => col.notNull())
     .execute();
 
+  // Промежуточные дедлайны (контрольные точки сдачи билетов)
+  await db.schema
+    .createTable('checkpoints')
+    .ifNotExists()
+    .addColumn('checkpoint_id', 'integer', (col) => col.primaryKey().autoIncrement())
+    .addColumn('deadline_at', 'text', (col) => col.notNull())
+    .addColumn('reminded_at', 'text')
+    .addColumn('processed_at', 'text')
+    .execute();
+
+  // Безопасное добавление колонки missed_deadlines в существующую таблицу users
+  const userColumns = await sql<{ name: string }>`PRAGMA table_info(users)`.execute(db);
+  const hasMissedDeadlines = userColumns.rows.some((col) => col.name === 'missed_deadlines');
+  if (!hasMissedDeadlines) {
+    await sql`ALTER TABLE users ADD COLUMN missed_deadlines INTEGER NOT NULL DEFAULT 0`.execute(db);
+    console.log('Миграция: в таблицу users добавлена колонка missed_deadlines.');
+  }
+
   await sql`PRAGMA foreign_keys = ON`.execute(db);
 
   console.log('Миграции выполнены успешно.');

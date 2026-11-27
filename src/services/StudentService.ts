@@ -54,6 +54,7 @@ export class StudentService {
       student: userRow.student,
       editor: userRow.editor,
       chiefEditor: userRow.chiefEditor,
+      missedDeadlines: userRow.missedDeadlines ?? 0,
     };
   }
 
@@ -81,6 +82,7 @@ export class StudentService {
       student: 0,
       editor: 0,
       chiefEditor: isChiefEditor,
+      missedDeadlines: 0,
     };
 
     await this.userRepo.insert(newUser);

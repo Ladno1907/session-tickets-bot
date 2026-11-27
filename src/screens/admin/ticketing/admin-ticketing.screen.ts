@@ -1,4 +1,5 @@
 import { InlineKeyboard } from 'grammy';
+import { unlink } from 'node:fs/promises';
 import { bot } from '../../../bot.js';
 import { BaseScreen, RenderResult } from '../../base.screen.js';
 import { MyContext } from '../../../types/context.js';
@@ -12,6 +13,7 @@ import { AdminTickFilesScreen } from './admin-tick-files.screen.js';
 import { AdminTickBroadcastScreen } from './admin-tick-broadcast.screen.js';
 import { AdminTickSheetsScreen } from './admin-tick-sheets.screen.js';
 import { AdminTickAddUserScreen } from './admin-tick-add-user.screen.js';
+import { AdminTickDeadlinesScreen } from './admin-tick-deadlines.screen.js';
 import { FeedbackScreen } from '../../feedback.screen.js';
 
 /**
@@ -52,9 +54,11 @@ export class AdminTicketingScreen implements BaseScreen {
     const keyboard = new InlineKeyboard()
       .text('🔄 Обновить статистику', 'tick_adm:refresh').row()
       .text('📥 Скачать файлы билетов', 'tick_adm:files').row()
+      .text('💾 Скачать бэкап (БД + data)', 'admin_dl_backup').row()
       .text('📢 Массовая рассылка (Спам)', 'tick_adm:broadcast').row()
       .text('📝 Синхронизация с таблицами', 'tick_adm:sheets').row()
       .text('➕ Добавить участника', 'tick_adm:add_user').row()
+      .text('⏱ Промежуточные дедлайны', 'tick_adm:deadlines').row()
       .text('📥 Скачать журнал фидбека', 'admin_dl_feedback').row();
 
     if (!isFinished) {
@@ -81,6 +85,19 @@ export class AdminTicketingScreen implements BaseScreen {
     if (data === 'tick_adm:broadcast') return new AdminTickBroadcastScreen();
     if (data === 'tick_adm:sheets') return new AdminTickSheetsScreen();
     if (data === 'tick_adm:add_user') return new AdminTickAddUserScreen();
+    if (data === 'tick_adm:deadlines') return new AdminTickDeadlinesScreen();
+
+    if (data === 'admin_dl_backup') {
+      try {
+        const zipPath = await chiefEditorService.createFullBackup(ctx.from!.id);
+        await messageManager.sendMediaToOne(bot, ctx.from!.id, zipPath);
+        await unlink(zipPath).catch(() => {});
+        ctx.session.meta.notice = '✅ Полный бэкап (`storage.db` + `data/`) отправлен в чат!';
+      } catch (e: any) {
+        ctx.session.meta.notice = `❌ Ошибка создания бэкапа: ${e.message || e}`;
+      }
+      return this;
+    }
 
     if (data === 'tick_adm:finish') {
       try {

@@ -1,3 +1,4 @@
+import { sql } from 'kysely';
 import type { Transaction, Insertable, Updateable, Selectable } from 'kysely';
 import { BaseRepository, type DbOrTrx } from './BaseRepository.js';
 import type { UsersTable, DatabaseSchema } from '../../types/database.js';
@@ -103,6 +104,19 @@ export class UserRepository extends BaseRepository {
     return Number(res?.count ?? 0);
   }
 
+  /**
+   * Возвращает студентов, у которых количество пропущенных дедлайнов >= `minMisses`.
+   */
+  async findUsersWithMissedDeadlines(minMisses: number = 1): Promise<SelectableUser[]> {
+    return this.db
+      .selectFrom('users')
+      .selectAll()
+      .where('missedDeadlines', '>=', minMisses)
+      .orderBy('missedDeadlines', 'desc')
+      .orderBy('userName', 'asc')
+      .execute();
+  }
+
   // =========================================================================
   // ЗАПИСЬ И ОБНОВЛЕНИЕ (INSERT / UPDATE)
   // =========================================================================
@@ -152,6 +166,21 @@ export class UserRepository extends BaseRepository {
     }
 
     await query.execute();
+  }
+
+  /**
+   * Увеличивает счётчик пропущенных дедлайнов (`missed_deadlines + 1`) у указанных пользователей.
+   */
+  async incrementMissedDeadlines(telegramIds: number[]): Promise<void> {
+    if (telegramIds.length === 0) return;
+
+    await this.db
+      .updateTable('users')
+      .set({
+        missedDeadlines: sql`missed_deadlines + 1`,
+      })
+      .where('telegramId', 'in', telegramIds)
+      .execute();
   }
 
   // =========================================================================

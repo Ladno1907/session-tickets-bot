@@ -14,6 +14,7 @@ export interface DatabaseSchema {
   process_config: ProcessConfigTable;
   user_main_menu_states: UserMainMenuStateTable;
   sessions: SessionsTable;
+  checkpoints: CheckpointsTable;
 }
 
 export interface SessionsTable {
@@ -29,6 +30,7 @@ export interface UsersTable {
   student: 0 | 1;
   editor: 0 | 1;
   chiefEditor: 0 | 1;
+  missedDeadlines: Generated<number>;
 }
 
 export interface SubjectsTable {
@@ -80,3 +82,9 @@ export interface UserMainMenuStateTable {
   lastUpdated: string;
 }
 
+export interface CheckpointsTable {
+  checkpointId: Generated<number>;
+  deadlineAt: string;
+  remindedAt?: string | null;
+  processedAt?: string | null;
+}

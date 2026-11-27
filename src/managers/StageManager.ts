@@ -5,6 +5,7 @@ import { messageManager } from './MessageManager.js';
 import { ProcessConfigRepository } from '../database/repositories/ProcessConfigRepo.js';
 import { ProcessConfig, ProcessStage } from '../types/entities.js';
 import { distributionService } from '../services/DistributionService.js';
+import { checkpointService } from '../services/CheckpointService.js';
 
 /**
  * Менеджер жизненного цикла и этапов подготовки сессии (`PREPARATION -> REGISTRATION -> DISTRIBUTION -> TICKETING -> FINISHED`).
@@ -59,6 +60,10 @@ export class StageManager {
         await this.executeTransitionEffects(currentStage, nextStage, bot);
         await this.processConfigRepository.update({ currentStage: nextStage });
         currentStage = nextStage;
+      }
+
+      if (currentStage === ProcessStage.TICKETING) {
+        await checkpointService.processCheckpoints(bot);
       }
     } finally {
       this.isTransitioning = false;

@@ -62,6 +62,9 @@ export const config = {
   /** Интервал фоновой проверки дедлайнов этапов (1 минута). */
   checkInterval: 60 * 1000,
 
+  /** За сколько часов до промежуточного дедлайна отправлять напоминание (по умолчанию 6 часов). */
+  checkpointReminderHours: Number(process.env.CHECKPOINT_REMINDER_HOURS || 36),
+
   /** Список Telegram ID главных редакторов (администраторов). */
   chiefEditorIds: required('CHIEF_EDITOR_IDS')
     .split(',')

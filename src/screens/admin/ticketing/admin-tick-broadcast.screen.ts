@@ -13,7 +13,8 @@ type BroadcastMode =
   | 'editors'
   | 'students_by_sub'
   | 'editors_by_sub'
-  | 'by_fio';
+  | 'by_fio'
+  | 'debtors';
 
 type BroadcastStep =
   | 'select_mode'
@@ -52,6 +53,7 @@ export class AdminTickBroadcastScreen implements BaseScreen {
         .text('📘 Студентам по предмету(-ам)', 'bc_mode:students_by_sub').row()
         .text('👑 Редакторам по предмету(-ам)', 'bc_mode:editors_by_sub').row()
         .text('👤 Выборочно по ФИ', 'bc_mode:by_fio').row()
+        .text('⏰ Должникам (по графику дедлайнов)', 'bc_mode:debtors').row()
         .text('⬅️ Отмена', 'bc_act:cancel');
     } else if (step === 'select_subjects') {
       const selectedIds: number[] = ctx.session.meta?.bcSubjectIds || [];
@@ -144,7 +146,6 @@ export class AdminTickBroadcastScreen implements BaseScreen {
   async handle(ctx: MyContext): Promise<BaseScreen | null> {
     if (!ctx.from) return null;
 
-    // 1. Обработка кнопок
     if (ctx.callbackQuery?.data) {
       const data = ctx.callbackQuery.data;
       await ctx.answerCallbackQuery();
@@ -178,6 +179,28 @@ export class AdminTickBroadcastScreen implements BaseScreen {
 
         if (mode === 'by_fio') {
           ctx.session.meta.bcStep = 'select_fio';
+          return this;
+        }
+
+        if (mode === 'debtors') {
+          const { nextPoint, currentDebtors } = await chiefEditorService.getCheckpointsOverview(ctx.from.id);
+          if (!nextPoint || currentDebtors.length === 0) {
+            ctx.session.meta.notice = '🎉 Должников по текущему дедлайну не найдено!';
+            return this;
+          }
+
+          ctx.session.meta.bcRecipients = currentDebtors.map((d) => d.telegramId);
+          ctx.session.meta.bcDocs = [];
+          ctx.session.meta.bcStep = 'attach_files';
+
+          const listText = currentDebtors
+            .map((d, i) => {
+              const sStr = d.subjects.map((s) => `${s.subjectName}: ${s.submitted}/${s.required}`).join(', ');
+              return `${i + 1}. *${escapeMarkdown(d.userName)}* (${escapeMarkdown(sStr)})`;
+            })
+            .join('\n');
+
+          ctx.session.meta.notice = `⏰ *Должники Этапа №${nextPoint.index} (${currentDebtors.length} чел.):*\n${listText}`;
           return this;
         }
       }
@@ -229,7 +252,6 @@ export class AdminTickBroadcastScreen implements BaseScreen {
       }
     }
 
-    // 2. Обработка входящих сообщений в зависимости от шага
     const step = ctx.session.meta?.bcStep as BroadcastStep | undefined;
 
     if (step === 'select_fio' && ctx.message?.text) {

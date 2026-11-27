@@ -7,6 +7,8 @@ import { ProcessConfig, ProcessStage, TicketStatus } from '../types/entities.js'
 import { ParsedSubjectRow } from '../types/sheets.js';
 import { config } from '../config.js';
 
+import { checkpointRepository } from '../database/repositories/CheckpointRepo.js';
+import { checkpointService, type TimelinePoint, type CheckpointDebtor } from './CheckpointService.js';
 import { stageManager } from '../managers/StageManager.js';
 import { userRepository } from '../database/repositories/UserRepo.js';
 import { editorRepository } from '../database/repositories/EditorRepo.js';
@@ -986,6 +988,7 @@ export class ChiefEditorService {
       student: 0,
       editor: 0,
       chiefEditor: this.isAdmin(targetTelegramId) ? 1 : 0,
+      missedDeadlines: 0,
     });
   }
 
@@ -1001,6 +1004,103 @@ export class ChiefEditorService {
     }
 
     return filePath;
+  }
+
+  /**
+   * Формирует полный ZIP-бэкап базы данных и директории `data/`.
+   */
+  async createFullBackup(chiefEditorTelegramId: number): Promise<string> {
+    this.assertAdmin(chiefEditorTelegramId);
+    return ticketFileStorage.createFullBackupArchive();
+  }
+
+  // =========================================================================
+  // УПРАВЛЕНИЕ ПРОМЕЖУТОЧНЫМИ ДЕДЛАЙНАМИ И МЕТКАМИ ПРОСРОЧЕК
+  // =========================================================================
+
+  /**
+   * Возвращает всю шкалу дедлайнов, текущие настройки тумблеров и список должников ближайшего этапа.
+   */
+  async getCheckpointsOverview(chiefEditorTelegramId: number): Promise<{
+    timeline: TimelinePoint[];
+    settings: { autoRemind: boolean; autoPenalize: boolean };
+    nextPoint: TimelinePoint | null;
+    currentDebtors: CheckpointDebtor[];
+  }> {
+    this.assertAdmin(chiefEditorTelegramId);
+
+    const timeline = await checkpointService.getTimeline();
+    const settings = await checkpointService.getSettings();
+    const { point: nextPoint, debtors: currentDebtors } = await checkpointService.getNextActiveCheckpointStatus();
+
+    return { timeline, settings, nextPoint, currentDebtors };
+  }
+
+  /**
+   * Добавляет новый промежуточный дедлайн (ISO-строка, обычно 23:00 МСК / 20:00 UTC).
+   */
+  async addCheckpoint(chiefEditorTelegramId: number, isoDeadline: string): Promise<void> {
+    this.assertAdmin(chiefEditorTelegramId);
+    await checkpointRepository.insert({ deadlineAt: isoDeadline });
+  }
+
+  /**
+   * Удаляет промежуточный дедлайн по его ID.
+   */
+  async removeCheckpoint(chiefEditorTelegramId: number, checkpointId: number): Promise<void> {
+    this.assertAdmin(chiefEditorTelegramId);
+    await checkpointRepository.remove(checkpointId);
+  }
+
+  /**
+   * Переключает автоматические напоминания (`autoRemind`) или авто-фиксацию просрочек (`autoPenalize`).
+   */
+  async toggleCheckpointSetting(
+    chiefEditorTelegramId: number,
+    key: 'autoRemind' | 'autoPenalize'
+  ): Promise<{ autoRemind: boolean; autoPenalize: boolean }> {
+    this.assertAdmin(chiefEditorTelegramId);
+    return checkpointService.toggleSetting(key);
+  }
+
+  /**
+   * Изменяет счётчик пропущенных дедлайнов (`missed_deadlines`) у студента на `delta` (+1 или -1, не ниже 0).
+   */
+  async adjustUserMissedDeadlines(
+    chiefEditorTelegramId: number,
+    targetTelegramId: number,
+    delta: number
+  ): Promise<number> {
+    this.assertAdmin(chiefEditorTelegramId);
+
+    const user = await this.userRepo.findById(targetTelegramId);
+    if (!user) throw new Error('Пользователь не найден.');
+
+    const nextValue = Math.max(0, (user.missedDeadlines ?? 0) + delta);
+    await this.userRepo.update(targetTelegramId, { missedDeadlines: nextValue });
+    return nextValue;
+  }
+
+  /**
+   * Возвращает список всех активных студентов с их текущим количеством пропущенных дедлайнов
+   * (отсортировано по убыванию пропусков).
+   */
+  async getStudentsMissesList(chiefEditorTelegramId: number): Promise<{
+    telegramId: number;
+    userName: string;
+    missedDeadlines: number;
+  }[]> {
+    this.assertAdmin(chiefEditorTelegramId);
+
+    const users = await this.userRepo.findAll();
+    return users
+      .filter((u) => u.student === 1)
+      .map((u) => ({
+        telegramId: u.telegramId,
+        userName: u.userName,
+        missedDeadlines: u.missedDeadlines ?? 0,
+      }))
+      .sort((a, b) => b.missedDeadlines - a.missedDeadlines || a.userName.localeCompare(b.userName));
   }
 }
 
