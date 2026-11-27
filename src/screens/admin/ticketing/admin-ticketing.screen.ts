@@ -14,6 +14,7 @@ import { AdminTickBroadcastScreen } from './admin-tick-broadcast.screen.js';
 import { AdminTickSheetsScreen } from './admin-tick-sheets.screen.js';
 import { AdminTickAddUserScreen } from './admin-tick-add-user.screen.js';
 import { AdminTickDeadlinesScreen } from './admin-tick-deadlines.screen.js';
+import { AdminTickTicketsScreen } from './admin-tick-tickets.screen.js';
 import { FeedbackScreen } from '../../feedback.screen.js';
 
 /**
@@ -57,6 +58,7 @@ export class AdminTicketingScreen implements BaseScreen {
       .text('💾 Скачать бэкап (БД + data)', 'admin_dl_backup').row()
       .text('📢 Массовая рассылка (Спам)', 'tick_adm:broadcast').row()
       .text('📝 Синхронизация с таблицами', 'tick_adm:sheets').row()
+      .text('🎫 Управление билетами', 'tick_adm:tickets').row()
       .text('➕ Добавить участника', 'tick_adm:add_user').row()
       .text('⏱ Промежуточные дедлайны', 'tick_adm:deadlines').row()
       .text('📥 Скачать журнал фидбека', 'admin_dl_feedback').row();
@@ -86,6 +88,7 @@ export class AdminTicketingScreen implements BaseScreen {
     if (data === 'tick_adm:sheets') return new AdminTickSheetsScreen();
     if (data === 'tick_adm:add_user') return new AdminTickAddUserScreen();
     if (data === 'tick_adm:deadlines') return new AdminTickDeadlinesScreen();
+    if (data === 'tick_adm:tickets') return new AdminTickTicketsScreen();
 
     if (data === 'admin_dl_backup') {
       try {

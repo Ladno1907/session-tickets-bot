@@ -6,7 +6,6 @@ import { config } from '../config.js';
 import { MyContext } from '../types/context.js';
 import { TicketStatus } from '../types/entities.js';
 import { checkpointRepository } from '../database/repositories/CheckpointRepo.js';
-import { processConfigRepository } from '../database/repositories/ProcessConfigRepo.js';
 import { subjectRepository } from '../database/repositories/SubjectRepo.js';
 import { ticketRepository } from '../database/repositories/TicketRepo.js';
 import { userRepository } from '../database/repositories/UserRepo.js';
@@ -27,7 +26,7 @@ export interface CheckpointDebtor {
 }
 
 export interface TimelinePoint {
-  checkpointId: number | null; // null для финального ticketingEnd
+  checkpointId: number;
   index: number; // 1-based порядковый номер дедлайна
   totalPoints: number;
   deadlineAt: Date;
@@ -38,11 +37,11 @@ export interface TimelinePoint {
 /**
  * Сервис управления промежуточными дедлайнами (контрольными точками),
  * расчёта равномерной нормы сдачи билетов, напоминаний и фиксации просрочек.
+ * Учитывает исключительно контрольные точки из таблицы `checkpoints` (без финального `ticketingEnd`).
  */
 export class CheckpointService {
   constructor(
     private readonly checkpointRepo = checkpointRepository,
-    private readonly processConfigRepo = processConfigRepository,
     private readonly subjectRepo = subjectRepository,
     private readonly ticketRepo = ticketRepository,
     private readonly userRepo = userRepository,
@@ -55,55 +54,25 @@ export class CheckpointService {
   // =========================================================================
 
   /**
-   * Формирует отсортированную шкалу всех контрольных точек этапа `TICKETING`
-   * (промежуточные чекпоинты из БД + финальный `ticketingEnd`, если он задан).
+   * Формирует отсортированную шкалу промежуточных контрольных точек из таблицы `checkpoints`.
    */
   public async getTimeline(): Promise<TimelinePoint[]> {
     const checkpoints = await this.checkpointRepo.findAllSorted();
-    const cfg = await this.processConfigRepo.findGlobalConfig();
 
-    const rawPoints: {
-      checkpointId: number | null;
-      deadlineAt: Date;
-      remindedAt?: string | null;
-      processedAt?: string | null;
-    }[] = checkpoints.map((cp) => ({
+    return checkpoints.map((cp, idx) => ({
       checkpointId: cp.checkpointId,
+      index: idx + 1,
+      totalPoints: checkpoints.length,
       deadlineAt: new Date(cp.deadlineAt),
       remindedAt: cp.remindedAt,
       processedAt: cp.processedAt,
-    }));
-
-    if (cfg?.ticketingEnd) {
-      const finalDate = new Date(cfg.ticketingEnd);
-      if (finalDate.getUTCHours() === 0 && finalDate.getUTCMinutes() === 0) {
-        finalDate.setUTCHours(20, 0, 0, 0);
-      }
-
-      const alreadyExists = rawPoints.some(
-        (p) => Math.abs(p.deadlineAt.getTime() - finalDate.getTime()) < 60_000
-      );
-      if (!alreadyExists) {
-        rawPoints.push({
-          checkpointId: null,
-          deadlineAt: finalDate,
-        });
-      }
-    }
-
-    rawPoints.sort((a, b) => a.deadlineAt.getTime() - b.deadlineAt.getTime());
-
-    return rawPoints.map((p, idx) => ({
-      ...p,
-      index: idx + 1,
-      totalPoints: rawPoints.length,
     }));
   }
 
   /**
    * Вычисляет список студентов, не выполнивших норму к дедлайну `stepIndex` из `totalSteps`.
    * Норма по каждому предмету рассчитывается равномерно: `Math.ceil((totalTickets * stepIndex) / totalSteps)`.
-   * Если студент отстаёт хотя бы по одному предмету — он включается в список должников.
+   * Если студент отстаёт хотя бы по одному предмету (где у него > 0 билетов) — он включается в список должников.
    */
   public async getDebtorsForStep(stepIndex: number, totalSteps: number): Promise<CheckpointDebtor[]> {
     const subjects = await this.subjectRepo.findAll();
@@ -114,6 +83,8 @@ export class CheckpointService {
 
     for (const sub of subjects) {
       const tickets = await this.ticketRepo.findBySubjectIdSorted(sub.subjectId);
+      if (tickets.length === 0) continue;
+
       const byStudent = new Map<number, { total: number; submitted: number }>();
 
       for (const t of tickets) {
@@ -133,6 +104,8 @@ export class CheckpointService {
       }
 
       for (const [studentId, stat] of byStudent) {
+        if (stat.total === 0) continue;
+
         const user = usersMap.get(studentId);
         if (!user || user.student !== 1) continue;
 
@@ -184,8 +157,10 @@ export class CheckpointService {
 
   /**
    * Проверяет все промежуточные чекпоинты:
-   * 1) Если до дедлайна осталось <= `checkpointReminderHours` и напоминание ещё не слалось — рассылает предупреждение должникам.
-   * 2) Если дедлайн наступил и ещё не обработан — начисляет `+1` к `missed_deadlines` должникам и рассылает уведомления.
+   * 1) Если включено `autoRemind` и до дедлайна осталось <= `checkpointReminderHours` —
+   *    рассылает предупреждение должникам.
+   * 2) Если включено `autoPenalize` и дедлайн наступил — начисляет `+1` к `missed_deadlines`
+   *    должникам и рассылает уведомления.
    */
   public async processCheckpoints(bot: Bot<MyContext>): Promise<void> {
     const settings = await this.getSettings();
@@ -198,8 +173,6 @@ export class CheckpointService {
     const reminderWindowMs = config.checkpointReminderHours * 60 * 60 * 1000;
 
     for (const point of timeline) {
-      if (point.checkpointId === null) continue;
-
       const timeLeftMs = point.deadlineAt.getTime() - now.getTime();
       const dateStr = point.deadlineAt.toLocaleString('ru-RU', {
         timeZone: 'Europe/Moscow',
@@ -251,9 +224,7 @@ export class CheckpointService {
           await bot.api.sendMessage(adminId, adminReport, { parse_mode: 'Markdown' }).catch(() => {});
           await new Promise((r) => setTimeout(r, config.delayMs));
         }
-      }
-
-      else if (settings.autoRemind && timeLeftMs > 0 && timeLeftMs <= reminderWindowMs && !point.remindedAt) {
+      } else if (settings.autoRemind && timeLeftMs > 0 && timeLeftMs <= reminderWindowMs && !point.remindedAt) {
         const debtors = await this.getDebtorsForStep(point.index, point.totalPoints);
         await this.checkpointRepo.update(point.checkpointId, {
           remindedAt: now.toISOString(),

@@ -6,11 +6,11 @@ import { escapeMarkdown } from '../../../utils/format.js';
 import { paginateItems, appendPaginationButtons } from '../../pagination.js';
 import { AdminTicketingScreen } from './admin-ticketing.screen.js';
 
-type DeadlinesMode = 'overview' | 'add_date' | 'misses';
+type DeadlinesMode = 'overview' | 'add_date' | 'misses' | 'confirm_expel';
 
 /**
- * Экран управления промежуточными дедлайнами, тумблерами напоминаний/просрочек
- * и ручной корректировки меток просрочек студентов (кандидатов на отчисление).
+ * Экран управления промежуточными дедлайнами, тумблерами напоминаний/просрочек,
+ * ручной корректировки меток просрочек и ручного отчисления студентов.
  */
 export class AdminTickDeadlinesScreen implements BaseScreen {
   readonly id = 'admin_tick_deadlines';
@@ -23,7 +23,28 @@ export class AdminTickDeadlinesScreen implements BaseScreen {
     let text = '';
 
     // -----------------------------------------------------------------------
-    // РЕЖИМ 1: ВВОД ДАТЫ НОВОГО ПРОМЕЖУТОЧНОГО ДЕДЛАЙНА
+    // РЕЖИМ 1: ПОДТВЕРЖДЕНИЕ ОТЧИСЛЕНИЯ УЧАСТНИКА
+    // -----------------------------------------------------------------------
+    if (mode === 'confirm_expel') {
+      const targetUid = ctx.session.meta?.expelTargetUid;
+      const targetName = ctx.session.meta?.expelTargetName || `ID ${targetUid}`;
+
+      text = `⛔ *Подтверждение отчисления (дисквалификации)*\n\n` +
+             `Вы уверены, что хотите дисквалифицировать участника *${escapeMarkdown(targetName)}*?\n\n` +
+             `• Все его билеты (включая уже сданные) будут временно переданы соответствующим редакторам.\n` +
+             `• Доступ к личному кабинету /user для участника закроется.`;
+
+      return {
+        displayType: 'main_menu',
+        text,
+        reply_markup: new InlineKeyboard()
+          .text('⛔ Да, отчислить участника', `dl_expel_confirm:${targetUid}`).row()
+          .text('❌ Отмена', 'dl:mode_misses'),
+      };
+    }
+
+    // -----------------------------------------------------------------------
+    // РЕЖИМ 2: ВВОД ДАТЫ НОВОГО ПРОМЕЖУТОЧНОГО ДЕДЛАЙНА
     // -----------------------------------------------------------------------
     if (mode === 'add_date') {
       text = `📅 *Новый промежуточный дедлайн*\n\n` +
@@ -38,7 +59,7 @@ export class AdminTickDeadlinesScreen implements BaseScreen {
     }
 
     // -----------------------------------------------------------------------
-    // РЕЖИМ 2: УПРАВЛЕНИЕ МЕТКАМИ ПРОСРОЧЕК И СПИСОК НА ОТЧИСЛЕНИЕ
+    // РЕЖИМ 3: УПРАВЛЕНИЕ МЕТКАМИ ПРОСРОЧЕК И СПИСОК НА ОТЧИСЛЕНИЕ
     // -----------------------------------------------------------------------
     if (mode === 'misses') {
       const students = await chiefEditorService.getStudentsMissesList(ctx.from.id);
@@ -56,7 +77,7 @@ export class AdminTickDeadlinesScreen implements BaseScreen {
         text += `✅ Кандидатов на отчисление (2+ пропуска) пока нет.\n\n`;
       }
 
-      text += `📋 *Все студенты (нажмите +1 или -1 для правки меток):*\n`;
+      text += `📋 *Все студенты (➖1 / ➕1 — метки, ⛔ — отчислить):*\n`;
 
       const { pageItems, page, totalPages } = paginateItems(
         students,
@@ -75,6 +96,7 @@ export class AdminTickDeadlinesScreen implements BaseScreen {
           .text(`${badge} ${s.userName.split(' ')[0]} (${s.missedDeadlines})`, 'noop')
           .text('➖1', `dl_miss_adj:${s.telegramId}:-1`)
           .text('➕1', `dl_miss_adj:${s.telegramId}:1`)
+          .text('⛔', `dl_expel_ask:${s.telegramId}`)
           .row();
       }
 
@@ -91,7 +113,7 @@ export class AdminTickDeadlinesScreen implements BaseScreen {
     }
 
     // -----------------------------------------------------------------------
-    // РЕЖИМ 3: ОБЗОР ШКАЛЫ ДЕДЛАЙНОВ, ТУМБЛЕРОВ И ТЕКУЩИХ ДОЛЖНИКОВ
+    // РЕЖИМ 4: ОБЗОР ШКАЛЫ ДЕДЛАЙНОВ, ТУМБЛЕРОВ И ТЕКУЩИХ ДОЛЖНИКОВ
     // -----------------------------------------------------------------------
     const { timeline, settings, nextPoint, currentDebtors } =
       await chiefEditorService.getCheckpointsOverview(ctx.from.id);
@@ -100,10 +122,10 @@ export class AdminTickDeadlinesScreen implements BaseScreen {
            `⚙️ *Автоматика:*\n` +
            `• Напоминания перед дедлайном: ${settings.autoRemind ? '🟢 ВКЛ' : '🔴 ВЫКЛ'}\n` +
            `• Авто-фиксация просрочек: ${settings.autoPenalize ? '🟢 ВКЛ' : '🔴 ВЫКЛ'}\n\n` +
-           `📅 *Шкала дедлайнов этапа сдачи:*\n`;
+           `📅 *Шкала промежуточных дедлайнов:*\n`;
 
     if (timeline.length === 0) {
-      text += `_Контрольные точки не заданы._\n`;
+      text += `_Промежуточные дедлайны не заданы._\n`;
     } else {
       for (const p of timeline) {
         const dateStr = p.deadlineAt.toLocaleString('ru-RU', {
@@ -114,12 +136,9 @@ export class AdminTickDeadlinesScreen implements BaseScreen {
           minute: '2-digit',
         });
         const statusIcon = p.processedAt ? '✅' : '⏳';
-        const label = p.checkpointId === null ? 'Финал (ticketingEnd)' : `Этап №${p.index}`;
-        text += `${statusIcon} *${label}:* ${dateStr} МСК\n`;
+        text += `${statusIcon} *Этап №${p.index}:* ${dateStr} МСК\n`;
 
-        if (p.checkpointId !== null) {
-          keyboard.text(`🗑 Удалить дедлайн ${dateStr.split(',')[0]}`, `dl:del:${p.checkpointId}`).row();
-        }
+        keyboard.text(`🗑 Удалить дедлайн ${dateStr.split(',')[0]}`, `dl:del:${p.checkpointId}`).row();
       }
     }
 
@@ -176,6 +195,8 @@ export class AdminTickDeadlinesScreen implements BaseScreen {
       }
 
       if (data === 'dl:mode_misses') {
+        delete ctx.session.meta.expelTargetUid;
+        delete ctx.session.meta.expelTargetName;
         ctx.session.meta.dlMode = 'misses';
         ctx.session.meta.dl_misses_page = 0;
         return this;
@@ -216,20 +237,50 @@ export class AdminTickDeadlinesScreen implements BaseScreen {
         await chiefEditorService.adjustUserMissedDeadlines(ctx.from.id, targetUid, delta);
         return this;
       }
+
+      if (data.startsWith('dl_expel_ask:')) {
+        const [, rawUid] = data.split(':');
+        const targetUid = parseInt(rawUid, 10);
+        const students = await chiefEditorService.getStudentsMissesList(ctx.from.id);
+        const found = students.find((s) => s.telegramId === targetUid);
+
+        ctx.session.meta.expelTargetUid = targetUid;
+        ctx.session.meta.expelTargetName = found?.userName || `ID ${targetUid}`;
+        ctx.session.meta.dlMode = 'confirm_expel';
+        return this;
+      }
+
+      if (data.startsWith('dl_expel_confirm:')) {
+        const [, rawUid] = data.split(':');
+        const targetUid = parseInt(rawUid, 10);
+
+        try {
+          const res = await chiefEditorService.expelStudent(ctx.from.id, targetUid);
+          delete ctx.session.meta.expelTargetUid;
+          delete ctx.session.meta.expelTargetName;
+          ctx.session.meta.dlMode = 'misses';
+          ctx.session.meta.notice =
+            `⛔ Участник *${escapeMarkdown(res.userName)}* отчислен!\n` +
+            `Передано редакторам билетов: *${res.transferredCount}* шт.`;
+          return this;
+        } catch (e: any) {
+          ctx.session.meta.dlMode = 'misses';
+          ctx.session.meta.notice = `❌ Ошибка отчисления: ${e.message || e}`;
+          return this;
+        }
+      }
     }
 
     if (ctx.session.meta?.dlMode === 'add_date' && ctx.message?.text) {
       const input = ctx.message.text.trim();
       if (!/^\d{4}-\d{2}-\d{2}$/.test(input)) {
-        ctx.session.meta.notice = '⚠️ Неверный формат! Введите дату строго как `YYYY-MM-DD`:';
+        ctx.session.meta.notice = '⚠️ Неверный формат! Введите дату строго как YYYY-MM-DD:';
         return this;
       }
-
       try {
         const [year, month, day] = input.split('-').map(Number);
         const isoDate = new Date(Date.UTC(year, month - 1, day, 20, 0, 0, 0)).toISOString();
         await chiefEditorService.addCheckpoint(ctx.from.id, isoDate);
-
         ctx.session.meta.dlMode = 'overview';
         ctx.session.meta.notice = `✅ Промежуточный дедлайн на *${input} 23:00 МСК* добавлен!`;
         return this;
@@ -242,4 +293,3 @@ export class AdminTickDeadlinesScreen implements BaseScreen {
     return null;
   }
 }
-

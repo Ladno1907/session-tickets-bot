@@ -18,6 +18,7 @@ import { subjectRepository } from '../database/repositories/SubjectRepo.js';
 import { editorRequestRepository } from '../database/repositories/EditorRequestRepo.js';
 import { ticketSheetRepository } from '../database/sheetRepositories/TicketSheetRepository.js';
 import { registrationRepository } from '../database/repositories/RegistrationRepo.js';
+import { ticketViewRepository, type TicketWithSubjectView } from '../database/repositories/TicketViewRepo.js';
 import { ticketFileStorage } from '../storage/TicketFileStorage.js';
 import { feedbackStorage } from '../storage/FeedbackStorage.js';
 
@@ -1101,6 +1102,335 @@ export class ChiefEditorService {
         missedDeadlines: u.missedDeadlines ?? 0,
       }))
       .sort((a, b) => b.missedDeadlines - a.missedDeadlines || a.userName.localeCompare(b.userName));
+  }
+
+  /**
+   * Ручное отчисление (дисквалификация) студента администратором:
+   * - Все билеты студента (включая уже сданные и принятые) временно передаются
+   *   соответствующему редактору (`studentId = ticket.editorId`, если это не сам отчисляемый,
+   *   иначе другому редактору предмета или оставляются свободными для ручного назначения).
+   * - Редактору добавляется регистрация на предмет и флаг `student = 1`, чтобы он видел эти билеты в `/user`.
+   * - У отчисленного студента удаляются регистрации на предметы и сбрасывается флаг `student = 0`
+   *   (права редактора `/editor` при наличии сохраняются).
+   * - Затронутые листы Google Sheets автоматически обновляются.
+   */
+  async expelStudent(
+    chiefEditorTelegramId: number,
+    targetTelegramId: number
+  ): Promise<{ userName: string; transferredCount: number }> {
+    this.assertAdmin(chiefEditorTelegramId);
+
+    const targetUser = await this.userRepo.findById(targetTelegramId);
+    if (!targetUser) {
+      throw new Error('Пользователь не найден.');
+    }
+
+    const result = await db.transaction().execute(async (trx) => {
+      const txTicketRepo = this.ticketRepo.withTransaction(trx);
+      const txRegRepo = this.registrationRepo.withTransaction(trx);
+      const txEditorRepo = this.editorRepo.withTransaction(trx);
+      const txUserRepo = this.userRepo.withTransaction(trx);
+      const txSubjectRepo = this.subjectRepo.withTransaction(trx);
+
+      const allSubjects = await txSubjectRepo.findAll();
+      let transferredCount = 0;
+      const editorsToActivate = new Set<string>(); // "editorId:subjectId"
+      const affectedSubjectIds = new Set<number>();
+
+      for (const sub of allSubjects) {
+        const tickets = await txTicketRepo.findBySubjectIdSorted(sub.subjectId);
+        const subjectEditors = await txEditorRepo.findBySubjectId(sub.subjectId);
+        const fallbackEditor = subjectEditors.find((e) => e.telegramId !== targetTelegramId);
+
+        for (const t of tickets) {
+          if (t.studentId !== targetTelegramId) continue;
+
+          affectedSubjectIds.add(sub.subjectId);
+
+          const receiverEditorId =
+            t.editorId && t.editorId !== targetTelegramId
+              ? t.editorId
+              : fallbackEditor?.telegramId;
+
+          if (receiverEditorId) {
+            await txTicketRepo.update(t.ticketId, {
+              studentId: receiverEditorId,
+              status: t.status ?? TicketStatus.IN_PROGRESS,
+              updatedAt: new Date().toISOString(),
+            });
+            editorsToActivate.add(`${receiverEditorId}:${sub.subjectId}`);
+          } else {
+            await txTicketRepo.update(t.ticketId, {
+              studentId: undefined,
+              updatedAt: new Date().toISOString(),
+            });
+          }
+          transferredCount++;
+        }
+      }
+
+      const oldRegs = await txRegRepo.findByUserId(targetTelegramId);
+      for (const r of oldRegs) {
+        await txRegRepo.remove(targetTelegramId, r.subjectId);
+      }
+      await txUserRepo.update(targetTelegramId, { student: 0 });
+
+      for (const pair of editorsToActivate) {
+        const [edIdStr, subIdStr] = pair.split(':');
+        const edId = parseInt(edIdStr, 10);
+        const subId = parseInt(subIdStr, 10);
+
+        const existingReg = await txRegRepo.findByUserAndSubject(edId, subId);
+        if (!existingReg) {
+          await txRegRepo.insert({ telegramId: edId, subjectId: subId });
+        }
+        await txUserRepo.update(edId, { student: 1 });
+      }
+
+      const uniqueEditorIds = Array.from(
+        new Set(Array.from(editorsToActivate).map((p) => parseInt(p.split(':').at(0)!, 10)))
+      );
+
+      return {
+        userName: targetUser.userName,
+        transferredCount,
+        editorIds: uniqueEditorIds,
+        affectedSubjectIds: Array.from(affectedSubjectIds),
+      };
+    });
+
+    for (const subId of result.affectedSubjectIds) {
+      await this.syncSubjectAssignmentsToSheet(subId);
+    }
+
+    await bot.api
+      .sendMessage(
+        targetTelegramId,
+        `⛔ *Вы отчислены (дисквалифицированы) из подготовки билетов* решением администратора.\n\n` +
+        `Все ваши билеты (${result.transferredCount} шт.) переданы редакторам. Доступ к разделу /user закрыт.`,
+        { parse_mode: 'Markdown' }
+      )
+      .catch(() => {});
+
+    for (const edId of result.editorIds) {
+      if (edId === targetTelegramId) continue;
+      await bot.api
+        .sendMessage(
+          edId,
+          `📥 *Временное назначение билетов:*\n\n` +
+          `Участник *${result.userName}* был дисквалифицирован. Его билеты по вашему предмету временно переведены на вас (доступны в меню /user) до переназначения администратором.`,
+          { parse_mode: 'Markdown' }
+        )
+        .catch(() => {});
+    }
+
+    return {
+      userName: result.userName,
+      transferredCount: result.transferredCount,
+    };
+  }
+
+  // =========================================================================
+  // РУЧНОЕ УПРАВЛЕНИЕ БИЛЕТАМИ И НАЗНАЧЕНИЯМИ (TICKETING / FINISHED)
+  // =========================================================================
+
+  /**
+   * Возвращает список всех билетов выбранного предмета с ФИО назначенных студентов
+   * для просмотра и ручного управления администратором.
+   */
+  async getSubjectTicketsForAdmin(
+    chiefEditorTelegramId: number,
+    subjectId: number
+  ): Promise<{
+    ticketId: number;
+    ticketNumber: number;
+    question: string;
+    studentName: string | null;
+    status?: TicketStatus;
+  }[]> {
+    this.assertAdmin(chiefEditorTelegramId);
+
+    const tickets = await this.ticketRepo.findBySubjectIdSorted(subjectId);
+    const allUsers = await this.userRepo.findAll();
+    const usersMap = new Map(allUsers.map((u) => [u.telegramId, u.userName]));
+
+    return tickets.map((t) => ({
+      ticketId: t.ticketId,
+      ticketNumber: t.ticketNumber,
+      question: t.question,
+      studentName: t.studentId ? (usersMap.get(t.studentId) || `ID ${t.studentId}`) : null,
+      status: t.status,
+    }));
+  }
+
+  /**
+   * Возвращает полную карточку конкретного билета для администратора
+   * (включая ФИО студента и ФИО редактора).
+   */
+  async getTicketDetailsForAdmin(
+    chiefEditorTelegramId: number,
+    ticketId: number
+  ): Promise<(TicketWithSubjectView & { editorName?: string | null }) | null> {
+    this.assertAdmin(chiefEditorTelegramId);
+
+    const ticket = await ticketViewRepository.findByTicketId(ticketId);
+    if (!ticket) return null;
+
+    let editorName: string | null = null;
+    if (ticket.editorId) {
+      const editorUser = await this.userRepo.findById(ticket.editorId);
+      editorName = editorUser ? editorUser.userName : `ID ${ticket.editorId}`;
+    }
+
+    return { ...ticket, editorName };
+  }
+
+  /**
+   * Переназначает студента на конкретный билет (по `newStudentId`, либо снимает привязку при `null`).
+   * Автоматически обеспечивает регистрацию нового студента на этот предмет и флаг `student = 1`.
+   */
+  async reassignTicketStudent(
+    chiefEditorTelegramId: number,
+    ticketId: number,
+    newStudentId: number | null
+  ): Promise<void> {
+    this.assertAdmin(chiefEditorTelegramId);
+
+    const ticket = await this.ticketRepo.findById(ticketId);
+    if (!ticket) throw new Error('Билет не найден.');
+
+    await db.transaction().execute(async (trx) => {
+      const txTicketRepo = this.ticketRepo.withTransaction(trx);
+      const txRegRepo = this.registrationRepo.withTransaction(trx);
+      const txUserRepo = this.userRepo.withTransaction(trx);
+
+      if (newStudentId === null) {
+        await txTicketRepo.update(ticketId, {
+          studentId: undefined,
+          updatedAt: new Date().toISOString(),
+        });
+        return;
+      }
+
+      const targetUser = await txUserRepo.findById(newStudentId);
+      if (!targetUser) throw new Error('Выбранный пользователь не найден в БД.');
+
+      await txTicketRepo.update(ticketId, {
+        studentId: newStudentId,
+        status: ticket.status ?? TicketStatus.IN_PROGRESS,
+        updatedAt: new Date().toISOString(),
+      });
+
+      const existingReg = await txRegRepo.findByUserAndSubject(newStudentId, ticket.subjectId);
+      if (!existingReg) {
+        await txRegRepo.insert({ telegramId: newStudentId, subjectId: ticket.subjectId });
+      }
+      await txUserRepo.update(newStudentId, { student: 1 });
+    });
+
+    await this.syncSubjectAssignmentsToSheet(ticket.subjectId);
+  }
+
+  /**
+   * Переназначает проверяющего редактора на конкретный билет (по `newEditorId`, либо снимает при `null`).
+   * Автоматически добавляет привязку к предмету в `editors_for_subjects` и флаг `editor = 1`.
+   */
+  async reassignTicketEditor(
+    chiefEditorTelegramId: number,
+    ticketId: number,
+    newEditorId: number | null
+  ): Promise<void> {
+    this.assertAdmin(chiefEditorTelegramId);
+
+    const ticket = await this.ticketRepo.findById(ticketId);
+    if (!ticket) throw new Error('Билет не найден.');
+
+    await db.transaction().execute(async (trx) => {
+      const txTicketRepo = this.ticketRepo.withTransaction(trx);
+      const txEditorRepo = this.editorRepo.withTransaction(trx);
+      const txUserRepo = this.userRepo.withTransaction(trx);
+
+      if (newEditorId === null) {
+        await txTicketRepo.update(ticketId, {
+          editorId: undefined,
+          updatedAt: new Date().toISOString(),
+        });
+        return;
+      }
+
+      const targetUser = await txUserRepo.findById(newEditorId);
+      if (!targetUser) throw new Error('Выбранный пользователь не найден в БД.');
+
+      await txTicketRepo.update(ticketId, {
+        editorId: newEditorId,
+        updatedAt: new Date().toISOString(),
+      });
+
+      const existingEd = await txEditorRepo.findByUserAndSubject(newEditorId, ticket.subjectId);
+      if (!existingEd) {
+        await txEditorRepo.insert({ telegramId: newEditorId, subjectId: ticket.subjectId });
+      }
+      await txUserRepo.update(newEditorId, { editor: 1 });
+    });
+
+    await this.syncSubjectAssignmentsToSheet(ticket.subjectId);
+  }
+
+  /**
+   * Принудительно устанавливает статус билета администратором (`APPROVED` или `IN_PROGRESS`)
+   * и синхронизирует цвет ячейки в Google Sheets.
+   */
+  async forceSetTicketStatus(
+    chiefEditorTelegramId: number,
+    ticketId: number,
+    status: TicketStatus.APPROVED | TicketStatus.IN_PROGRESS
+  ): Promise<void> {
+    this.assertAdmin(chiefEditorTelegramId);
+
+    const ticketView = await ticketViewRepository.findByTicketId(ticketId);
+    if (!ticketView) throw new Error('Билет не найден.');
+
+    await this.ticketRepo.update(ticketId, {
+      status,
+      updatedAt: new Date().toISOString(),
+    });
+
+    await this.ticketSheetRepo
+      .updateTicketCellColor(ticketView.subjectName, ticketView.ticketNumber, status)
+      .catch((err) => console.error('Ошибка покраски ячейки в Sheets:', err));
+  }
+
+  /**
+   * Синхронизирует колонки C (студенты) и D (редакторы с объединением ячеек)
+   * выбранного предмета из SQLite в Google Sheets, не затрагивая цвета ячеек.
+   */
+  private async syncSubjectAssignmentsToSheet(subjectId: number): Promise<void> {
+    const subject = await this.subjectRepo.findById(subjectId);
+    if (!subject) return;
+
+    const tickets = await this.ticketRepo.findBySubjectIdSorted(subjectId);
+    const allUsers = await this.userRepo.findAll();
+    const usersMap = new Map(allUsers.map((u) => [u.telegramId, u.userName]));
+
+    const studentAssignments: { ticketNumber: number; studentFio: string }[] = [];
+    const editorAssignments: { ticketNumber: number; editorFio: string }[] = [];
+
+    for (const t of tickets) {
+      if (t.studentId && usersMap.has(t.studentId)) {
+        studentAssignments.push({ ticketNumber: t.ticketNumber, studentFio: usersMap.get(t.studentId)! });
+      }
+      if (t.editorId && usersMap.has(t.editorId)) {
+        editorAssignments.push({ ticketNumber: t.ticketNumber, editorFio: usersMap.get(t.editorId)! });
+      }
+    }
+
+    await this.ticketSheetRepo
+      .saveAssignedStudents(subject.subjectName, studentAssignments)
+      .catch((err) => console.error('Ошибка синхронизации студентов в Sheets:', err));
+
+    await this.ticketSheetRepo
+      .saveAssignedEditors(subject.subjectName, editorAssignments)
+      .catch((err) => console.error('Ошибка синхронизации редакторов в Sheets:', err));
   }
 }
 
